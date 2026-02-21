@@ -1,0 +1,35 @@
+{
+  "repos": {
+    "my-app": {
+      "url": "git@github.com:user/my-app.git",
+      "defaultBranch": "main"
+    }
+  },
+  "users": {
+    "slack:U12345678": {
+      "name": "love",
+      "repos": ["my-app"]
+    },
+    "whatsapp:46701234567": {
+      "name": "love",
+      "repos": ["my-app"]
+    }
+  },
+  "claude": {
+    "maxTurns": 25
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/YOUR_USER"]
+    }
+  },
+  "cron": [
+    {
+      "schedule": "0 9 * * 1-5",
+      "repo": "my-app",
+      "prompt": "Review all open PRs and post review comments.",
+      "userId": "slack:U12345678"
+    }
+  ]
+}

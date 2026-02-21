@@ -1,0 +1,15 @@
+[Unit]
+Description=Ove - Personal AI coding assistant
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/path/to/ove
+ExecStart=/path/to/bun run src/index.ts
+Restart=always
+RestartSec=5
+EnvironmentFile=/path/to/ove/.env
+
+[Install]
+WantedBy=multi-user.target

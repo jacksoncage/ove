@@ -1,0 +1,15 @@
+services:
+  ove:
+    build: .
+    env_file: .env
+    environment:
+      - ANTHROPIC_API_KEY
+    ports:
+      - "${HTTP_API_PORT:-3000}:${HTTP_API_PORT:-3000}"
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./.env:/app/.env:ro
+      - ./repos:/app/repos
+      - ~/.ssh:/home/bun/.ssh:ro
+      - ~/.claude:/home/bun/.claude
+    restart: unless-stopped

@@ -1,0 +1,123 @@
+// src/adapters/slack.ts
+import { App } from "@slack/bolt";
+import type { ChatAdapter, IncomingMessage } from "./types";
+import { logger } from "../logger";
+
+function debounce<T extends (...args: any[]) => any>(fn: T, ms: number): T {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return ((...args: any[]) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      fn(...args);
+    }, ms);
+  }) as any as T;
+}
+
+export class SlackAdapter implements ChatAdapter {
+  private app: App;
+  private onMessage?: (msg: IncomingMessage) => void;
+
+  constructor() {
+    this.app = new App({
+      token: process.env.SLACK_BOT_TOKEN,
+      appToken: process.env.SLACK_APP_TOKEN,
+      socketMode: true,
+    });
+  }
+
+  private buildMessage(
+    userId: string,
+    text: string,
+    say: (text: string) => Promise<any>,
+    channel: string
+  ): IncomingMessage {
+    let statusMsgTs: string | undefined;
+
+    const doUpdate = debounce(async (statusText: string) => {
+      if (statusMsgTs) {
+        try {
+          await this.app.client.chat.update({
+            channel,
+            ts: statusMsgTs,
+            text: statusText,
+          });
+        } catch {
+          const result = await say(statusText);
+          if (result && "ts" in result) statusMsgTs = result.ts;
+        }
+      } else {
+        const result = await say(statusText);
+        if (result && "ts" in result) statusMsgTs = result.ts;
+      }
+    }, 3000);
+
+    return {
+      userId,
+      platform: "slack",
+      text,
+      reply: async (replyText: string) => {
+        await say(replyText);
+      },
+      updateStatus: doUpdate,
+    };
+  }
+
+  async start(onMessage: (msg: IncomingMessage) => void): Promise<void> {
+    this.onMessage = onMessage;
+
+    // Listen for DMs
+    this.app.message(async ({ message, say }) => {
+      if (message.subtype) return;
+      if (!("text" in message) || !message.text) return;
+      if (!("user" in message) || !message.user) return;
+
+      const msg = this.buildMessage(
+        `slack:${message.user}`,
+        message.text,
+        say,
+        message.channel
+      );
+      logger.info("slack message received", { userId: msg.userId, text: message.text.slice(0, 100) });
+      this.onMessage?.(msg);
+    });
+
+    // Listen for app mentions in channels
+    this.app.event("app_mention", async ({ event, say }) => {
+      const text = event.text.replace(/<@[A-Z0-9]+>/g, "").trim();
+      const msg = this.buildMessage(
+        `slack:${event.user}`,
+        text,
+        say,
+        event.channel
+      );
+      logger.info("slack mention received", { userId: msg.userId, text: text.slice(0, 100) });
+      this.onMessage?.(msg);
+    });
+
+    await this.app.start();
+    logger.info("slack adapter started");
+  }
+
+  async stop(): Promise<void> {
+    await this.app.stop();
+    logger.info("slack adapter stopped");
+  }
+
+  async sendToUser(userId: string, text: string): Promise<void> {
+    const slackUserId = userId.replace("slack:", "");
+    try {
+      const result = await this.app.client.conversations.open({
+        users: slackUserId,
+      });
+      if (result.channel?.id) {
+        await this.app.client.chat.postMessage({
+          channel: result.channel.id,
+          text,
+        });
+      }
+    } catch (err) {
+      logger.error("failed to send DM", { userId, error: String(err) });
+    }
+  }
+}

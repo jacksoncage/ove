@@ -1,0 +1,7 @@
+node_modules/
+repos/
+.env
+ove.db
+.git/
+docs/
+*.md

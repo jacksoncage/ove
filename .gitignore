@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+repos/
+auth/
+*.db
+*.db-shm
+*.db-wal
+config.json
+.claude/settings.local.json
