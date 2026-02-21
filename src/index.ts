@@ -3,6 +3,7 @@ import { loadConfig, isAuthorized, getUserRepos, addRepo, addUser } from "./conf
 import { TaskQueue } from "./queue";
 import { RepoManager } from "./repos";
 import { ClaudeRunner } from "./runners/claude";
+import { CodexRunner } from "./runners/codex";
 import { parseMessage, buildContextualPrompt } from "./router";
 import { SlackAdapter } from "./adapters/slack";
 import { WhatsAppAdapter } from "./adapters/whatsapp";
@@ -13,7 +14,7 @@ import { HttpApiAdapter } from "./adapters/http";
 import { GitHubAdapter } from "./adapters/github";
 import type { ChatAdapter, IncomingMessage } from "./adapters/types";
 import type { EventAdapter, IncomingEvent } from "./adapters/types";
-import type { AgentRunner, StatusEvent } from "./runner";
+import type { AgentRunner, RunOptions, StatusEvent } from "./runner";
 import { logger } from "./logger";
 import { SessionStore } from "./sessions";
 import { startCronLoop } from "./cron";
@@ -42,7 +43,38 @@ const queue = new TaskQueue(db);
 const repos = new RepoManager(config.reposDir);
 const sessions = new SessionStore(db);
 const schedules = new ScheduleStore(db);
-const runner: AgentRunner = new ClaudeRunner();
+const runners = new Map<string, AgentRunner>();
+
+function getRunner(name: string = "claude"): AgentRunner {
+  let r = runners.get(name);
+  if (!r) {
+    switch (name) {
+      case "codex":
+        r = new CodexRunner();
+        break;
+      case "claude":
+      default:
+        r = new ClaudeRunner();
+        break;
+    }
+    runners.set(name, r);
+  }
+  return r;
+}
+
+function getRunnerForRepo(repo: string): AgentRunner {
+  const repoRunner = config.repos[repo]?.runner;
+  const globalRunner = config.runner;
+  const name = repoRunner?.name || globalRunner?.name || "claude";
+  return getRunner(name);
+}
+
+function getRunnerOptsForRepo(repo: string, baseOpts: RunOptions): RunOptions {
+  const repoRunner = config.repos[repo]?.runner;
+  const globalRunner = config.runner;
+  const model = repoRunner?.model || globalRunner?.model;
+  return model ? { ...baseOpts, model } : baseOpts;
+}
 
 // Reply callback map — stores original message for replying after task completion
 const pendingReplies = new Map<string, IncomingMessage>();
@@ -266,7 +298,8 @@ async function handleMessage(msg: IncomingMessage) {
     await msg.updateStatus("Thinking...");
 
     try {
-      const result = await runner.run(
+      const discussRunner = getRunner(config.runner?.name);
+      const result = await discussRunner.run(
         prompt,
         config.reposDir,
         { maxTurns: 5 },
@@ -469,13 +502,16 @@ async function processTask(task: import("./queue").Task) {
         await Bun.write(mcpConfigPath, JSON.stringify({ mcpServers: config.mcpServers }));
       }
 
-      const result = await runner.run(
+      const taskRunner = getRunnerForRepo(task.repo);
+      const runOpts = getRunnerOptsForRepo(task.repo, {
+        maxTurns: config.claude.maxTurns,
+        mcpConfigPath,
+      });
+
+      const result = await taskRunner.run(
         task.prompt,
         workDir,
-        {
-          maxTurns: config.claude.maxTurns,
-          mcpConfigPath,
-        },
+        runOpts,
         (event: StatusEvent) => {
           if (event.kind === "tool") {
             statusLog.push(`${event.tool}: ${event.input}`);
@@ -556,7 +592,7 @@ async function workerLoop() {
 
 // Main
 async function main() {
-  logger.info("ove starting", { chatAdapters: adapters.length, eventAdapters: eventAdapters.length, runner: runner.name });
+  logger.info("ove starting", { chatAdapters: adapters.length, eventAdapters: eventAdapters.length, runner: config.runner?.name || "claude" });
 
   for (const adapter of adapters) {
     await adapter.start(handleMessage);
