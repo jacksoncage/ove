@@ -5,6 +5,7 @@ export type MessageType =
   | "validate"
   | "discuss"
   | "create-project"
+  | "init-repo"
   | "free-form"
   | "status"
   | "history"
@@ -82,6 +83,16 @@ export function parseMessage(text: string): ParsedMessage {
   }
   if (/^i\s+have\s+(?:a|an)\s+(?:idea|new\s+idea)/i.test(lower)) {
     return { type: "discuss", args: { topic: trimmed }, rawText: trimmed };
+  }
+
+  // init repo <name> <url> [branch]
+  const initRepoMatch = trimmed.match(/^(?:init|setup|add)\s+repo\s+(\S+)\s+((?:git@|https:\/\/)\S+)(?:\s+(\S+))?$/i);
+  if (initRepoMatch) {
+    return {
+      type: "init-repo",
+      args: { name: initRepoMatch[1], url: initRepoMatch[2], branch: initRepoMatch[3] || "main" },
+      rawText: trimmed,
+    };
   }
 
   const repoHint = trimmed.match(/(?:in|on)\s+(\S+)\s*$/i);

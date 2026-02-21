@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 export interface RepoConfig {
   url: string;
@@ -70,4 +70,33 @@ export function isAuthorized(config: Config, platformUserId: string, repo?: stri
   if (!user) return false;
   if (!repo) return true;
   return user.repos.includes(repo);
+}
+
+export function saveConfig(config: Config): void {
+  const configPath = process.env.CONFIG_PATH || "./config.json";
+  // Read existing file to preserve extra fields (e.g. "runner")
+  let existing: Record<string, any> = {};
+  try {
+    existing = JSON.parse(readFileSync(configPath, "utf-8"));
+  } catch {}
+  const merged = { ...existing, repos: config.repos, users: config.users, claude: config.claude, reposDir: config.reposDir };
+  if (config.mcpServers) merged.mcpServers = config.mcpServers;
+  if (config.cron) merged.cron = config.cron;
+  writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n");
+}
+
+export function addRepo(config: Config, name: string, url: string, branch: string = "main"): void {
+  config.repos[name] = { url, defaultBranch: branch };
+  saveConfig(config);
+}
+
+export function addUser(config: Config, userId: string, name: string, repos: string[]): void {
+  const existing = config.users[userId];
+  if (existing) {
+    const merged = new Set([...existing.repos, ...repos]);
+    existing.repos = [...merged];
+  } else {
+    config.users[userId] = { name, repos: [...repos] };
+  }
+  saveConfig(config);
 }

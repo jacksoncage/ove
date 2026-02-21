@@ -124,6 +124,31 @@ describe("parseMessage", () => {
     expect(result.args.scheduleId).toBe(1);
   });
 
+  it("parses init repo with SSH URL", () => {
+    const result = parseMessage("init repo my-app git@github.com:user/my-app.git");
+    expect(result.type).toBe("init-repo");
+    expect(result.args.name).toBe("my-app");
+    expect(result.args.url).toBe("git@github.com:user/my-app.git");
+    expect(result.args.branch).toBe("main");
+  });
+
+  it("parses setup repo with HTTPS URL", () => {
+    const result = parseMessage("setup repo my-app https://github.com/user/my-app.git");
+    expect(result.type).toBe("init-repo");
+    expect(result.args.url).toBe("https://github.com/user/my-app.git");
+  });
+
+  it("parses add repo with custom branch", () => {
+    const result = parseMessage("add repo my-app git@github.com:org/my-app.git develop");
+    expect(result.type).toBe("init-repo");
+    expect(result.args.branch).toBe("develop");
+  });
+
+  it("does not match init repo without URL", () => {
+    const result = parseMessage("init repo my-app");
+    expect(result.type).not.toBe("init-repo");
+  });
+
   it("falls back to free-form for unrecognized input", () => {
     const result = parseMessage("what does the auth middleware do in my-app");
     expect(result.type).toBe("free-form");

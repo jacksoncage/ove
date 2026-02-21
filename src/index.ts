@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { loadConfig, isAuthorized, getUserRepos } from "./config";
+import { loadConfig, isAuthorized, getUserRepos, addRepo, addUser } from "./config";
 import { TaskQueue } from "./queue";
 import { RepoManager } from "./repos";
 import { ClaudeRunner } from "./runners/claude";
@@ -169,6 +169,7 @@ async function handleMessage(msg: IncomingMessage) {
       "• validate <repo> — run tests, unlike some people",
       "• discuss <topic> — I'll brainstorm, but no promises I'll be nice",
       "• create project <name> [with template <type>]",
+      "• init repo <name> <git-url> [branch] — set up a repo from chat",
       "• status / history / clear",
       "• <task> every day/weekday at <time> [on <repo>] — schedule a recurring task",
       "• list schedules — see your scheduled tasks",
@@ -216,7 +217,7 @@ async function handleMessage(msg: IncomingMessage) {
     const userRepos = getUserRepos(config, msg.userId);
 
     if (userRepos.length === 0) {
-      await msg.reply("You don't have access to any repos. Can't schedule what I can't reach.");
+      await msg.reply("You don't have access to any repos. Set one up first with `init repo <name> <git-url>`.");
       return;
     }
 
@@ -306,6 +307,32 @@ async function handleMessage(msg: IncomingMessage) {
     return;
   }
 
+  // Init repo — onboarding a new repo from chat
+  if (parsed.type === "init-repo") {
+    const { name, url, branch } = parsed.args;
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+      await msg.reply("Repo name must be alphanumeric, dashes, or underscores. Try again.");
+      return;
+    }
+
+    if (config.repos[name]) {
+      // Repo exists — just grant access
+      addUser(config, msg.userId, msg.userId, [name]);
+      const reply = `Repo "${name}" already exists. I've added you to it. Go ahead.`;
+      await msg.reply(reply);
+      sessions.addMessage(msg.userId, "assistant", reply);
+      return;
+    }
+
+    addRepo(config, name, url, branch);
+    addUser(config, msg.userId, msg.userId, [name]);
+    const reply = `Fine. Added repo "${name}" (${url}, branch: ${branch}). You're good to go — ask me to do something on ${name}.`;
+    await msg.reply(reply);
+    sessions.addMessage(msg.userId, "assistant", reply);
+    return;
+  }
+
   // Need a repo for task commands
   if (!parsed.repo) {
     const userRepos = getUserRepos(config, msg.userId);
@@ -317,7 +344,8 @@ async function handleMessage(msg: IncomingMessage) {
       sessions.addMessage(msg.userId, "assistant", reply);
       return;
     } else {
-      await msg.reply("You don't have access to any repos. Talk to someone about that.");
+      const reply = "You don't have access to any repos yet. Set one up:\n`init repo <name> <git-url> [branch]`\nExample: `init repo my-app git@github.com:user/my-app.git`";
+      await msg.reply(reply);
       return;
     }
   }
