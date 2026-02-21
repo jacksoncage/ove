@@ -18,25 +18,38 @@ export function validateConfig(opts?: { configPath?: string; envPath?: string })
 
   // Load env values from file if it exists
   const env = loadEnvFile(envPath);
-  const cliMode = process.env.CLI_MODE === "true" || env.CLI_MODE === "true";
+  const get = (key: string) => process.env[key] || env[key] || "";
+  const cliMode = get("CLI_MODE") === "true";
+
+  // Detect which transports are configured
+  const hasSlack = !!(get("SLACK_BOT_TOKEN") && get("SLACK_BOT_TOKEN") !== "xoxb-...");
+  const hasTelegram = !!get("TELEGRAM_BOT_TOKEN");
+  const hasDiscord = !!get("DISCORD_BOT_TOKEN");
+  const hasWhatsApp = get("WHATSAPP_ENABLED") === "true";
+  const hasHttp = !!get("HTTP_API_PORT") || !!get("HTTP_API_KEY");
+  const hasGitHub = !!get("GITHUB_POLL_REPOS");
+  const hasAnyTransport = cliMode || hasSlack || hasTelegram || hasDiscord || hasWhatsApp || hasHttp || hasGitHub;
 
   // Only warn about missing .env if env vars aren't already set
-  // (in Docker, env_file loads vars into process.env without the file being at ./.env)
-  const hasEnvVars = cliMode || (process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN);
-  if (!existsSync(envPath) && !hasEnvVars) {
+  if (!existsSync(envPath) && !hasAnyTransport) {
     issues.push(".env not found");
   }
 
-  if (!cliMode) {
-    const botToken = process.env.SLACK_BOT_TOKEN || env.SLACK_BOT_TOKEN || "";
-    if (!botToken || botToken === "xoxb-..." || botToken.startsWith("xoxb-...")) {
+  // Validate Slack tokens if Slack is partially configured
+  const slackBot = get("SLACK_BOT_TOKEN");
+  const slackApp = get("SLACK_APP_TOKEN");
+  if (slackBot || slackApp) {
+    if (!slackBot || slackBot === "xoxb-...") {
       issues.push("SLACK_BOT_TOKEN is a placeholder");
     }
-
-    const appToken = process.env.SLACK_APP_TOKEN || env.SLACK_APP_TOKEN || "";
-    if (!appToken || appToken === "xapp-..." || appToken.startsWith("xapp-...")) {
+    if (!slackApp || slackApp === "xapp-...") {
       issues.push("SLACK_APP_TOKEN is a placeholder");
     }
+  }
+
+  // Require at least one transport
+  if (!hasAnyTransport) {
+    issues.push("No transport configured");
   }
 
   // Check config.json content if it exists
@@ -95,6 +108,25 @@ export async function choose(rl: ReturnType<typeof createInterface>, question: s
   return choice - 1;
 }
 
+export async function chooseMulti(rl: ReturnType<typeof createInterface>, question: string, options: string[]): Promise<number[]> {
+  process.stdout.write(`\n  ${question} (comma-separated, e.g. 1,3,5)\n`);
+  for (let i = 0; i < options.length; i++) {
+    process.stdout.write(`    ${i + 1}. ${options[i]}\n`);
+  }
+  const answer = await rl.question("  > ");
+  const indices: number[] = [];
+  for (const part of answer.split(",")) {
+    const n = parseInt(part.trim(), 10);
+    if (!isNaN(n) && n >= 1 && n <= options.length) {
+      indices.push(n - 1);
+    }
+  }
+  return indices.length > 0 ? indices : [0];
+}
+
+const TRANSPORTS = ["Slack", "Telegram", "Discord", "WhatsApp", "HTTP API", "GitHub", "CLI"] as const;
+type Transport = (typeof TRANSPORTS)[number];
+
 export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
@@ -119,41 +151,74 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
       process.stdout.write("\n  Nåväl. Let's get this sorted.\n");
     }
 
-    // Determine adapter mode
-    let useSlack = false;
-    let useCli = false;
-
-    const needsSlackTokens = !fixing || fixing.some(i =>
-      i.includes("SLACK_BOT_TOKEN") || i.includes("SLACK_APP_TOKEN")
+    const needsTokens = !fixing || fixing.some(i =>
+      i.includes("SLACK_BOT_TOKEN") || i.includes("SLACK_APP_TOKEN") || i.includes("No transport")
     );
     const needsRepos = !fixing || fixing.some(i => i.includes("No repos"));
     const needsUsers = !fixing || fixing.some(i => i.includes("No users"));
     const needsConfigFile = !fixing || fixing.some(i => i.includes("config.json not found"));
     const needsEnvFile = !fixing || fixing.some(i => i.includes(".env not found"));
 
+    // Select transports
+    let selected: Transport[] = [];
+
     if (!fixing) {
-      const mode = await choose(rl, "How will you talk to me?", ["Slack", "CLI only", "Both"]);
-      useSlack = mode === 0 || mode === 2;
-      useCli = mode === 1 || mode === 2;
+      const indices = await chooseMulti(rl, "Which transports?", [...TRANSPORTS]);
+      selected = indices.map(i => TRANSPORTS[i]);
     } else {
-      // When fixing, infer mode from what's needed
-      useSlack = needsSlackTokens;
-      useCli = !useSlack;
+      // When fixing, infer from what's needed
+      if (needsTokens && fixing.some(i => i.includes("SLACK"))) {
+        selected.push("Slack");
+      }
+      if (selected.length === 0) selected.push("CLI");
     }
+
+    const has = (t: Transport) => selected.includes(t);
 
     // Collect env values
     const envValues: Record<string, string> = { ...existingEnv };
 
-    if (useSlack && needsSlackTokens) {
+    if (has("Slack") && needsTokens) {
       process.stdout.write("\n");
       const botToken = await ask(rl, "Slack Bot Token (xoxb-...)");
       if (botToken) envValues.SLACK_BOT_TOKEN = botToken;
-
       const appToken = await ask(rl, "Slack App Token (xapp-...)");
       if (appToken) envValues.SLACK_APP_TOKEN = appToken;
     }
 
-    if (!fixing && useCli && !useSlack) {
+    if (has("Telegram") && needsTokens) {
+      process.stdout.write("\n");
+      const token = await ask(rl, "Telegram Bot Token (from BotFather)");
+      if (token) envValues.TELEGRAM_BOT_TOKEN = token;
+    }
+
+    if (has("Discord") && needsTokens) {
+      process.stdout.write("\n");
+      const token = await ask(rl, "Discord Bot Token");
+      if (token) envValues.DISCORD_BOT_TOKEN = token;
+    }
+
+    if (has("WhatsApp")) {
+      envValues.WHATSAPP_ENABLED = "true";
+    }
+
+    if (has("HTTP API") && needsTokens) {
+      process.stdout.write("\n");
+      const port = (await ask(rl, "HTTP API port [3000]")) || "3000";
+      envValues.HTTP_API_PORT = port;
+      const key = await ask(rl, "API key (leave empty to generate)");
+      envValues.HTTP_API_KEY = key || crypto.randomUUID();
+    }
+
+    if (has("GitHub") && needsTokens) {
+      process.stdout.write("\n");
+      const repos = await ask(rl, "GitHub repos to poll (comma-separated owner/repo)");
+      if (repos) envValues.GITHUB_POLL_REPOS = repos;
+      const botName = (await ask(rl, "GitHub bot name [ove]")) || "ove";
+      envValues.GITHUB_BOT_NAME = botName;
+    }
+
+    if (has("CLI")) {
       envValues.CLI_MODE = "true";
     }
 
@@ -184,42 +249,103 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
     const repoNames = Object.keys(repos);
 
     if (needsUsers || needsConfigFile) {
-      if (useSlack) {
+      // Ask for user name once
+      let userName = "";
+      const chatTransports = selected.filter(t => t !== "HTTP API" && t !== "GitHub" && t !== "CLI");
+      if (chatTransports.length > 0 || has("GitHub")) {
         process.stdout.write("\n");
-        const userId = await ask(rl, "Your Slack user ID (U...)");
-        const name = await ask(rl, "Your name");
-        if (userId && name) {
-          users[`slack:${userId}`] = { name, repos: repoNames };
-        }
+        userName = await ask(rl, "Your name");
       }
 
-      if (useCli || !useSlack) {
-        if (!fixing) {
-          users["cli:local"] = { name: "local", repos: repoNames };
-        } else {
-          const name = await ask(rl, "Your name");
-          users["cli:local"] = { name: name || "local", repos: repoNames };
-        }
+      if (has("Slack")) {
+        const userId = await ask(rl, "Your Slack user ID (U...)");
+        if (userId) users[`slack:${userId}`] = { name: userName || "user", repos: repoNames };
+      }
+      if (has("Telegram")) {
+        const userId = await ask(rl, "Your Telegram user ID");
+        if (userId) users[`telegram:${userId}`] = { name: userName || "user", repos: repoNames };
+      }
+      if (has("Discord")) {
+        const userId = await ask(rl, "Your Discord user ID");
+        if (userId) users[`discord:${userId}`] = { name: userName || "user", repos: repoNames };
+      }
+      if (has("WhatsApp")) {
+        const phone = await ask(rl, "Your phone number (with country code)");
+        if (phone) users[`whatsapp:${phone}`] = { name: userName || "user", repos: repoNames };
+      }
+      if (has("HTTP API")) {
+        users["http:anon"] = { name: "http", repos: repoNames };
+      }
+      if (has("GitHub")) {
+        const ghUser = await ask(rl, "Your GitHub username");
+        if (ghUser) users[`github:${ghUser}`] = { name: userName || ghUser, repos: repoNames };
+      }
+      if (has("CLI")) {
+        users["cli:local"] = { name: userName || "local", repos: repoNames };
       }
     }
 
     // Write .env
-    if (needsEnvFile || needsSlackTokens || !fixing) {
-      const envLines: string[] = [
-        "# Slack (Socket Mode)",
-        `SLACK_BOT_TOKEN=${envValues.SLACK_BOT_TOKEN || "xoxb-..."}`,
-        `SLACK_APP_TOKEN=${envValues.SLACK_APP_TOKEN || "xapp-..."}`,
-        "",
-        "# WhatsApp",
-        `WHATSAPP_ENABLED=${envValues.WHATSAPP_ENABLED || "false"}`,
-        "",
-        "# CLI mode",
-        ...(envValues.CLI_MODE ? [`CLI_MODE=${envValues.CLI_MODE}`] : ["# CLI_MODE=true"]),
-        "",
-        "# Repos directory",
-        `REPOS_DIR=${envValues.REPOS_DIR || "./repos"}`,
-        "",
-      ];
+    if (needsEnvFile || needsTokens || !fixing) {
+      const envLines: string[] = [];
+
+      // Slack
+      if (has("Slack")) {
+        envLines.push("# Slack (Socket Mode)");
+        envLines.push(`SLACK_BOT_TOKEN=${envValues.SLACK_BOT_TOKEN || "xoxb-..."}`);
+        envLines.push(`SLACK_APP_TOKEN=${envValues.SLACK_APP_TOKEN || "xapp-..."}`);
+        envLines.push("");
+      }
+
+      // Telegram
+      if (has("Telegram")) {
+        envLines.push("# Telegram");
+        envLines.push(`TELEGRAM_BOT_TOKEN=${envValues.TELEGRAM_BOT_TOKEN || ""}`);
+        envLines.push("");
+      }
+
+      // Discord
+      if (has("Discord")) {
+        envLines.push("# Discord");
+        envLines.push(`DISCORD_BOT_TOKEN=${envValues.DISCORD_BOT_TOKEN || ""}`);
+        envLines.push("");
+      }
+
+      // WhatsApp
+      if (has("WhatsApp")) {
+        envLines.push("# WhatsApp");
+        envLines.push(`WHATSAPP_ENABLED=true`);
+        envLines.push("");
+      }
+
+      // HTTP API
+      if (has("HTTP API")) {
+        envLines.push("# HTTP API + Web UI");
+        envLines.push(`HTTP_API_PORT=${envValues.HTTP_API_PORT || "3000"}`);
+        envLines.push(`HTTP_API_KEY=${envValues.HTTP_API_KEY || ""}`);
+        envLines.push("");
+      }
+
+      // GitHub
+      if (has("GitHub")) {
+        envLines.push("# GitHub");
+        envLines.push(`GITHUB_POLL_REPOS=${envValues.GITHUB_POLL_REPOS || ""}`);
+        envLines.push(`GITHUB_BOT_NAME=${envValues.GITHUB_BOT_NAME || "ove"}`);
+        envLines.push("");
+      }
+
+      // CLI
+      if (has("CLI")) {
+        envLines.push("# CLI mode");
+        envLines.push("CLI_MODE=true");
+        envLines.push("");
+      }
+
+      // Always include repos dir
+      envLines.push("# Repos directory");
+      envLines.push(`REPOS_DIR=${envValues.REPOS_DIR || "./repos"}`);
+      envLines.push("");
+
       writeFileSync(envPath, envLines.join("\n") + "\n");
       process.stdout.write("\n  Wrote .env\n");
     }
