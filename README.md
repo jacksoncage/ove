@@ -6,7 +6,7 @@
 
 <p align="center">
   Your grumpy but meticulous dev companion.<br>
-  <a href="https://jacksoncage.github.io/ove">Docs</a> · <a href="https://github.com/jacksoncage/ove">GitHub</a> · <a href="https://github.com/jacksoncage/ove/pkgs/npm/ove">Package</a>
+  <a href="https://jacksoncage.github.io/ove">Docs</a> · <a href="https://github.com/jacksoncage/ove">GitHub</a> · <a href="https://www.npmjs.com/package/@lovenyberg/ove">Package</a>
 </p>
 
 ---
@@ -16,7 +16,7 @@ Talk to Ove from Slack, WhatsApp, Telegram, Discord, GitHub issues, a Web UI, or
 ## Quick Start
 
 ```bash
-npm install -g @jacksoncage/ove
+npm install -g @lovenyberg/ove
 ove init    # interactive setup — creates config.json and .env
 ove start
 ```
@@ -55,7 +55,7 @@ Three ways to run Ove. Pick what fits. See the [full guide](https://jacksoncage.
 ### Local
 
 ```bash
-npm install -g @jacksoncage/ove
+npm install -g @lovenyberg/ove
 ove init
 ove start
 ```
