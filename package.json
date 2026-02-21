@@ -1,5 +1,5 @@
 {
-  "name": "@jacksoncage/ove",
+  "name": "@lovenyberg/ove",
   "version": "0.1.0",
   "description": "Your grumpy but meticulous dev companion. AI coding agent for Slack, WhatsApp, Telegram, Discord, GitHub, HTTP API, and CLI.",
   "type": "module",
@@ -20,7 +20,7 @@
   },
   "homepage": "https://jacksoncage.github.io/ove",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public"
   },
   "dependencies": {
     "@slack/bolt": "^4.1.0",
