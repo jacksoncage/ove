@@ -680,7 +680,8 @@
 
     <h3>Prerequisites</h3>
     <ol class="steps">
-      <li><a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code CLI</a> installed and authenticated</li>
+      <li><a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code CLI</a> installed and authenticated (default runner)</li>
+      <li>Or <a href="https://github.com/openai/codex">OpenAI Codex CLI</a> installed and authenticated (alternative runner)</li>
       <li><a href="https://cli.github.com">GitHub CLI</a> (<code>gh</code>) installed and authenticated</li>
       <li>SSH access to your Git repos</li>
     </ol>
@@ -730,6 +731,7 @@ sudo systemctl enable --now ove</pre>
     "cli:local": { "name": "alice", "repos": ["my-app"] }
   },
   "claude": { "maxTurns": 10 },
+  "runner": { "name": "claude" },
   "cron": [
     {
       "schedule": "0 9 * * 1-5",
@@ -739,6 +741,8 @@ sudo systemctl enable --now ove</pre>
     }
   ]
 }</pre>
+
+    <p>Set <code>"runner"</code> globally to <code>{"name": "codex"}</code> to use OpenAI Codex, or override per-repo with a <code>"runner"</code> field inside the repo config. Supported runners: <code>claude</code> (default), <code>codex</code>.</p>
 
     <p>Static cron jobs go in <code>config.json</code>. Users can also create schedules from chat &mdash; just say something like <code>lint and check every day at 9</code>. These are stored in SQLite and managed with <code>list schedules</code> / <code>remove schedule #N</code>.</p>
 
@@ -791,7 +795,7 @@ sudo systemctl enable --now ove</pre>
       <li><span class="step-n">2</span><span class="step-arrow">&rsaquo;</span> Router parses intent and extracts repo/args</li>
       <li><span class="step-n">3</span><span class="step-arrow">&rsaquo;</span> Task gets queued in SQLite &mdash; one per repo at a time</li>
       <li><span class="step-n">4</span><span class="step-arrow">&rsaquo;</span> Worker creates an isolated git worktree</li>
-      <li><span class="step-n">5</span><span class="step-arrow">&rsaquo;</span> Runs <code>claude -p</code> with streaming NDJSON output</li>
+      <li><span class="step-n">5</span><span class="step-arrow">&rsaquo;</span> Runs the configured runner (<code>claude -p</code> or <code>codex exec</code>) with streaming JSON output</li>
       <li><span class="step-n">6</span><span class="step-arrow">&rsaquo;</span> Status updates stream back &mdash; chat edits, SSE, or GitHub comment</li>
       <li><span class="step-n">7</span><span class="step-arrow">&rsaquo;</span> Result sent back, worktree cleaned up</li>
     </ol>
@@ -855,7 +859,7 @@ sudo systemctl enable --now ove</pre>
     <p class="section-note">Pick your method. They all work. Ove doesn't care.</p>
 
     <h3>Docker</h3>
-    <p>The Dockerfile builds an image with Bun, git, openssh-client, and Claude CLI baked in. Just mount your config and go.</p>
+    <p>The Dockerfile builds an image with Bun, git, openssh-client, and Claude CLI baked in. Install Codex CLI separately if needed. Just mount your config and go.</p>
 <pre data-label="docker-compose.yml">services:
   ove:
     build: .
@@ -877,8 +881,11 @@ sudo systemctl enable --now ove</pre>
 <pre data-label="shell"># Bun
 curl -fsSL https://bun.sh/install | bash
 
-# Claude Code
+# Claude Code (default runner)
 npm install -g @anthropic-ai/claude-code
+
+# Or Codex CLI (alternative runner)
+# npm install -g @openai/codex
 
 # GitHub CLI
 sudo apt install gh
@@ -924,7 +931,7 @@ journalctl -u ove -f</pre>
 </div>
 
 <footer>
-  Built by <a href="https://www.jacksoncage.se/">Love Billingskog Nyberg</a> &middot; Powered by <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a>
+  Built by <a href="https://www.jacksoncage.se/">Love Billingskog Nyberg</a> &middot; Powered by <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a> &amp; <a href="https://github.com/openai/codex">Codex</a>
 </footer>
 
 </body>

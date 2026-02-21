@@ -25,7 +25,8 @@ ove start
 
 ## Prerequisites
 
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated (default runner)
+- Or [OpenAI Codex CLI](https://github.com/openai/codex) installed and authenticated (alternative runner)
 - [GitHub CLI](https://cli.github.com) (`gh`) installed and authenticated
 - SSH access to your git repos
 
@@ -73,7 +74,7 @@ ove init
 ove start
 ```
 
-Requires [Bun](https://bun.sh), Claude Code CLI, and GitHub CLI on your machine.
+Requires [Bun](https://bun.sh), Claude Code CLI (or Codex CLI), and GitHub CLI on your machine.
 
 ### Docker
 
@@ -83,11 +84,11 @@ docker compose up -d        # start container
 docker compose logs -f      # watch logs
 ```
 
-The image includes Bun, git, and Claude CLI. Mounts `config.json`, `.env`, `repos/`, and SSH keys from the host.
+The image includes Bun, git, and Claude CLI (install Codex CLI separately if needed). Mounts `config.json`, `.env`, `repos/`, and SSH keys from the host.
 
 ### VM
 
-Ove runs well on a small VM (2 CPU, 4 GB RAM). Install Bun, Claude Code, and GitHub CLI, then run as a systemd service:
+Ove runs well on a small VM (2 CPU, 4 GB RAM). Install Bun, Claude Code (or Codex CLI), and GitHub CLI, then run as a systemd service:
 
 ```bash
 git clone git@github.com:jacksoncage/ove.git && cd ove
@@ -159,6 +160,7 @@ sudo systemctl enable --now ove
     "cli:local": { "name": "alice", "repos": ["my-app"] }
   },
   "claude": { "maxTurns": 10 },
+  "runner": { "name": "claude" },
   "cron": [
     {
       "schedule": "0 9 * * 1-5",
@@ -169,6 +171,23 @@ sudo systemctl enable --now ove
   ]
 }
 ```
+
+### Runner Selection
+
+By default Ove uses Claude Code CLI. To use OpenAI Codex instead, set the `runner` field globally or per-repo:
+
+```json
+{
+  "runner": { "name": "codex", "model": "o3" },
+  "repos": {
+    "my-app": {
+      "runner": { "name": "claude" }
+    }
+  }
+}
+```
+
+Per-repo `runner` overrides the global default. Supported runners: `"claude"` (default), `"codex"`.
 
 Static cron jobs go in `config.json`. Users can also create schedules via chat — these are stored in SQLite and managed with `list schedules` / `remove schedule #N`.
 
@@ -185,7 +204,7 @@ bun test    # 150 tests
 3. Router parses intent and extracts repo/args
 4. Task gets queued in SQLite (one per repo at a time)
 5. Worker creates an isolated git worktree
-6. Runs `claude -p` with streaming NDJSON output
+6. Runs the configured agent runner (`claude -p` or `codex exec`) with streaming JSON output
 7. Status updates stream back (chat: edits a message, HTTP: SSE, GitHub: single comment)
 8. Result sent back, worktree cleaned up
 

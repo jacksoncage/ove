@@ -1,6 +1,6 @@
 # Ove
 
-Your grumpy but meticulous dev companion — routes chat messages to Claude Code CLI in isolated worktrees.
+Your grumpy but meticulous dev companion — routes chat messages to AI coding agents (Claude Code CLI or OpenAI Codex CLI) in isolated worktrees.
 
 ## Stack
 - Bun + TypeScript
@@ -11,12 +11,13 @@ Your grumpy but meticulous dev companion — routes chat messages to Claude Code
 - Bun.serve for HTTP API + Web UI
 - gh CLI for GitHub polling
 - bun:sqlite for task queue
-- claude -p CLI for code tasks
+- claude -p CLI for code tasks (default runner)
+- codex exec CLI for code tasks (alternative runner)
 
 ## Structure
 - src/adapters/ — chat platform adapters (Slack, WhatsApp, Telegram, Discord, CLI) and event adapters (GitHub, HTTP API)
 - src/queue.ts — SQLite task queue
-- src/runners/ — agent runner implementations (Claude, future Codex)
+- src/runners/ — agent runner implementations (Claude, Codex)
 - src/repos.ts — git clone/pull/worktree management
 - src/router.ts — message → task mapping
 - src/config.ts — repo/user configuration
