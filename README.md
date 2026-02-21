@@ -13,6 +13,8 @@
 
 Talk to Ove from Slack, WhatsApp, Telegram, Discord, GitHub issues, a Web UI, or the terminal — he'll grumble about it, but he'll review your PRs, fix your issues, run your tests, brainstorm ideas, and scaffold new projects. Properly.
 
+**Just chat.** You don't need to memorize commands. Talk to Ove like you'd talk to a colleague — ask questions, describe what you need, paste error messages, think out loud. He understands natural language. The commands below are shortcuts, not requirements.
+
 ## Quick Start
 
 ```bash
@@ -27,7 +29,18 @@ ove start
 - [GitHub CLI](https://cli.github.com) (`gh`) installed and authenticated
 - SSH access to your git repos
 
-## Commands
+## Usage
+
+Talk to Ove the way you'd talk to a teammate. These all work:
+
+```
+"can you check what's failing in the auth tests on my-app?"
+"the login page is broken, users get a 500 after submitting"
+"how does the payment webhook work in my-app?"
+"refactor the user service, it's getting messy"
+```
+
+Ove figures out the intent, picks the right repo, and gets to work. For common tasks, there are also shorthand commands:
 
 ```
 review PR #N on <repo>      Code review with inline comments

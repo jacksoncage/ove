@@ -1,8 +1,56 @@
 # Example Interactions
 
-Examples showing Ove across different transports and command types.
+Examples showing Ove across different transports. You can use shorthand commands or just chat naturally — Ove understands both.
 
-## PR Review
+## Natural Conversation
+
+You don't need commands. Just describe what you need, like you'd tell a colleague.
+
+**Slack DM:**
+```
+alice: the login page is broken, users get a 500 after submitting the form
+ove:   Task queued (aaa11111). Working on it...
+       > Grep: "login" in src/
+       > Read: src/routes/auth.ts
+       > Read: src/middleware/session.ts
+ove:   Found the issue — the session middleware wasn't awaiting the
+       database call on line 34 of src/middleware/session.ts. Created
+       PR #47 with the fix and added a test:
+       https://github.com/org/my-app/pull/47
+```
+
+**Telegram:**
+```
+alice: can you add input validation to the user registration endpoint in my-app?
+ove:   Task queued (bbb22222). Working on it...
+       > Read: src/routes/users.ts
+       > Edit: src/routes/users.ts
+       > Write: src/routes/users.test.ts
+       > Bash: bun test
+ove:   Done. Added zod validation for email, password length, and
+       username format. All 48 tests pass. PR #48:
+       https://github.com/org/my-app/pull/48
+```
+
+**Discord:**
+```
+alice: how does the caching layer work in my-app? I need to understand
+       it before I make changes
+ove:   Looking into it...
+       > Glob: **/*cache*
+       > Read: src/cache/redis.ts
+       > Read: src/cache/keys.ts
+       > Read: src/middleware/cache.ts
+ove:   The caching layer has 3 parts:
+       1. src/cache/redis.ts — Redis client wrapper with connection pooling
+       2. src/cache/keys.ts — key generation with TTL per resource type
+       3. src/middleware/cache.ts — Express middleware that caches GET
+          responses by URL + user role
+       Cache invalidation happens on POST/PUT/DELETE via the afterWrite
+       hook in the base repository class.
+```
+
+## PR Review (shorthand)
 
 **Slack DM:**
 ```
@@ -128,7 +176,9 @@ alice: remove schedule #1
 ove:   Schedule #1 removed.
 ```
 
-## Free-form
+## More Free-form Examples
+
+Anything you type works. Ove parses intent from natural language.
 
 ```
 alice: what does the auth middleware do in my-app
@@ -141,6 +191,18 @@ ove:   The auth middleware in my-app:
        3. Attaches decoded user to req.user
        4. Returns 401 for invalid/missing tokens
        Located in src/middleware/auth.ts (42 lines).
+```
+
+```
+alice: the CI is red on main, can you check what's going on?
+ove:   Task queued (ggg77777). Working on it...
+       > Bash: gh run list --limit 5
+       > Bash: gh run view 12345 --log-failed
+       > Read: src/api.test.ts
+ove:   The test "should return 404 for unknown routes" is failing
+       because the new /health endpoint was added without updating
+       the route count assertion. Line 89 in src/api.test.ts expects
+       12 routes but there are now 13. Want me to fix it?
 ```
 
 ## HTTP API
