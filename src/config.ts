@@ -1,8 +1,14 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
+export interface RunnerConfig {
+  name: string;
+  model?: string;
+}
+
 export interface RepoConfig {
   url: string;
   defaultBranch: string;
+  runner?: RunnerConfig;
 }
 
 export interface UserConfig {
@@ -33,6 +39,7 @@ export interface Config {
   reposDir: string;
   mcpServers?: Record<string, McpServerConfig>;
   cron?: CronTaskConfig[];
+  runner?: RunnerConfig;
 }
 
 export function loadConfig(): Config {
@@ -46,6 +53,7 @@ export function loadConfig(): Config {
       reposDir: process.env.REPOS_DIR || raw.reposDir || "./repos",
       mcpServers: raw.mcpServers,
       cron: raw.cron,
+      runner: raw.runner,
     };
   } catch {
     return {
@@ -82,6 +90,7 @@ export function saveConfig(config: Config): void {
   const merged = { ...existing, repos: config.repos, users: config.users, claude: config.claude, reposDir: config.reposDir };
   if (config.mcpServers) merged.mcpServers = config.mcpServers;
   if (config.cron) merged.cron = config.cron;
+  if (config.runner) merged.runner = config.runner;
   writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n");
 }
 
