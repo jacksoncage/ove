@@ -1,6 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { loadConfig, isAuthorized, getUserRepos, saveConfig, addRepo, addUser } from "./config";
+import type { Config } from "./config";
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
+
+function makeConfig(overrides: Partial<Config> = {}): Config {
+  return {
+    repos: {},
+    users: {},
+    claude: { maxTurns: 25 },
+    reposDir: "./repos",
+    ...overrides,
+  };
+}
 
 describe("loadConfig", () => {
   it("returns config with repos and users", () => {
@@ -97,5 +108,64 @@ describe("saveConfig / addRepo / addUser", () => {
     addUser(config, "slack:U1", "Alice", ["a", "b"]);
     addUser(config, "slack:U1", "Alice", ["b", "c"]);
     expect(config.users["slack:U1"].repos).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("wildcard auth", () => {
+  it("grants access to any repo with wildcard", () => {
+    const config = makeConfig({
+      users: { "tg:123": { name: "love", repos: ["*"] } },
+    });
+    expect(isAuthorized(config, "tg:123", "any-repo")).toBe(true);
+    expect(isAuthorized(config, "tg:123", "another-repo")).toBe(true);
+  });
+
+  it("still works with explicit repo list", () => {
+    const config = makeConfig({
+      users: { "tg:123": { name: "love", repos: ["my-app"] } },
+    });
+    expect(isAuthorized(config, "tg:123", "my-app")).toBe(true);
+    expect(isAuthorized(config, "tg:123", "other")).toBe(false);
+  });
+
+  it("denies unknown user", () => {
+    const config = makeConfig();
+    expect(isAuthorized(config, "unknown", "repo")).toBe(false);
+  });
+
+  it("allows user without repo check", () => {
+    const config = makeConfig({
+      users: { "tg:123": { name: "love", repos: [] } },
+    });
+    expect(isAuthorized(config, "tg:123")).toBe(true);
+  });
+});
+
+describe("getUserRepos with wildcard", () => {
+  it("returns ['*'] when user has wildcard", () => {
+    const config = makeConfig({
+      users: { "tg:123": { name: "love", repos: ["*"] } },
+    });
+    expect(getUserRepos(config, "tg:123")).toEqual(["*"]);
+  });
+
+  it("returns empty for unknown user", () => {
+    const config = makeConfig();
+    expect(getUserRepos(config, "unknown")).toEqual([]);
+  });
+});
+
+describe("github config type", () => {
+  it("accepts github config on Config", () => {
+    const config = makeConfig({
+      github: { syncInterval: 60000, orgs: ["my-org"] },
+    });
+    expect(config.github!.syncInterval).toBe(60000);
+    expect(config.github!.orgs).toEqual(["my-org"]);
+  });
+
+  it("github config is optional", () => {
+    const config = makeConfig();
+    expect(config.github).toBeUndefined();
   });
 });

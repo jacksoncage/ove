@@ -6,9 +6,10 @@ export interface RunnerConfig {
 }
 
 export interface RepoConfig {
-  url: string;
-  defaultBranch: string;
+  url?: string;
+  defaultBranch?: string;
   runner?: RunnerConfig;
+  excluded?: boolean;
 }
 
 export interface UserConfig {
@@ -30,6 +31,11 @@ export interface CronTaskConfig {
   userId: string;
 }
 
+export interface GitHubConfig {
+  syncInterval?: number;
+  orgs?: string[];
+}
+
 export interface Config {
   repos: Record<string, RepoConfig>;
   users: Record<string, UserConfig>;
@@ -40,6 +46,7 @@ export interface Config {
   mcpServers?: Record<string, McpServerConfig>;
   cron?: CronTaskConfig[];
   runner?: RunnerConfig;
+  github?: GitHubConfig;
 }
 
 export function loadConfig(): Config {
@@ -54,6 +61,7 @@ export function loadConfig(): Config {
       mcpServers: raw.mcpServers,
       cron: raw.cron,
       runner: raw.runner,
+      github: raw.github,
     };
   } catch {
     return {
@@ -77,7 +85,7 @@ export function isAuthorized(config: Config, platformUserId: string, repo?: stri
   const user = config.users[platformUserId];
   if (!user) return false;
   if (!repo) return true;
-  return user.repos.includes(repo);
+  return user.repos.includes("*") || user.repos.includes(repo);
 }
 
 export function saveConfig(config: Config): void {
@@ -91,6 +99,7 @@ export function saveConfig(config: Config): void {
   if (config.mcpServers) merged.mcpServers = config.mcpServers;
   if (config.cron) merged.cron = config.cron;
   if (config.runner) merged.runner = config.runner;
+  if (config.github) merged.github = config.github;
   writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n");
 }
 
