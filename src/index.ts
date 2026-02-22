@@ -16,6 +16,7 @@ import type { ChatAdapter, IncomingMessage } from "./adapters/types";
 import type { EventAdapter, IncomingEvent } from "./adapters/types";
 import type { AgentRunner, RunOptions, StatusEvent } from "./runner";
 import { logger } from "./logger";
+import { RepoRegistry, syncGitHub } from "./repo-registry";
 import { SessionStore } from "./sessions";
 import { startCronLoop } from "./cron";
 import { ScheduleStore } from "./schedules";
@@ -43,6 +44,17 @@ const queue = new TaskQueue(db);
 const repos = new RepoManager(config.reposDir);
 const sessions = new SessionStore(db);
 const schedules = new ScheduleStore(db);
+const repoRegistry = new RepoRegistry(db);
+
+// Migrate existing config repos to SQLite
+repoRegistry.migrateFromConfig(
+  Object.fromEntries(
+    Object.entries(config.repos)
+      .filter(([_, r]) => r.url)
+      .map(([name, r]) => [name, { url: r.url!, defaultBranch: r.defaultBranch }])
+  )
+);
+
 const runners = new Map<string, AgentRunner>();
 
 function getRunner(name: string = "claude"): AgentRunner {
@@ -74,6 +86,33 @@ function getRunnerOptsForRepo(repo: string, baseOpts: RunOptions): RunOptions {
   const globalRunner = config.runner;
   const model = repoRunner?.model || globalRunner?.model;
   return model ? { ...baseOpts, model } : baseOpts;
+}
+
+function getRepoInfo(repoName: string): { url: string; defaultBranch: string } | null {
+  const configRepo = config.repos[repoName];
+  const registryRepo = repoRegistry.getByName(repoName);
+
+  if (!configRepo?.url && !registryRepo) return null;
+
+  return {
+    url: configRepo?.url || registryRepo?.url || "",
+    defaultBranch: configRepo?.defaultBranch || registryRepo?.defaultBranch || "main",
+  };
+}
+
+async function startGitHubSync() {
+  if (!config.github) return;
+  const interval = config.github.syncInterval || 1_800_000;
+
+  // Initial sync
+  await syncGitHub(repoRegistry, config.github.orgs);
+
+  // Recurring sync
+  setInterval(() => {
+    syncGitHub(repoRegistry, config.github!.orgs).catch((err) =>
+      logger.warn("github sync failed", { error: String(err) })
+    );
+  }, interval);
 }
 
 // Reply callback map — stores original message for replying after task completion
@@ -169,8 +208,25 @@ async function handleMessage(msg: IncomingMessage) {
 
   // Handle non-task commands
   if (parsed.type === "status") {
-    const stats = queue.stats();
-    const reply = `${stats.pending} pending, ${stats.running} running, ${stats.completed} done, ${stats.failed} failed. I'm keeping track so you don't have to.`;
+    const userTasks = queue.listByUser(msg.userId, 5);
+    const running = userTasks.find((t) => t.status === "running");
+
+    let reply: string;
+    if (running) {
+      const elapsed = Math.round((Date.now() - new Date(running.createdAt).getTime()) / 1000);
+      const min = Math.floor(elapsed / 60);
+      const sec = elapsed % 60;
+      const duration = min > 0 ? `${min}m ${sec}s` : `${sec}s`;
+      reply = `Still working on task ${running.id.slice(0, 8)} on ${running.repo} (${duration}). Hold your horses.`;
+    } else {
+      const lastDone = userTasks.find((t) => t.status === "completed");
+      if (lastDone) {
+        reply = `Nothing running right now. Last task (${lastDone.id.slice(0, 8)} on ${lastDone.repo}) completed. Ask me something if you want.`;
+      } else {
+        const stats = queue.stats();
+        reply = `${stats.pending} pending, ${stats.running} running, ${stats.completed} done, ${stats.failed} failed. I'm keeping track so you don't have to.`;
+      }
+    }
     await msg.reply(reply);
     sessions.addMessage(msg.userId, "assistant", reply);
     return;
@@ -369,13 +425,27 @@ async function handleMessage(msg: IncomingMessage) {
   // Need a repo for task commands
   if (!parsed.repo) {
     const userRepos = getUserRepos(config, msg.userId);
-    if (userRepos.length === 1) {
+    const hasWildcard = userRepos.includes("*");
+
+    if (!hasWildcard && userRepos.length === 1) {
       parsed.repo = userRepos[0];
-    } else if (userRepos.length > 1) {
-      const reply = `Which repo? You have access to: ${userRepos.join(", ")}. Pick one.`;
-      await msg.reply(reply);
-      sessions.addMessage(msg.userId, "assistant", reply);
-      return;
+    } else if (hasWildcard || userRepos.length > 1) {
+      const repoNames = hasWildcard ? repoRegistry.getAllNames() : userRepos;
+
+      if (repoNames.length === 1) {
+        parsed.repo = repoNames[0];
+      } else if (repoNames.length === 0) {
+        const reply = "No repos discovered yet. Set one up with `init repo <name> <git-url>` or configure GitHub sync.";
+        await msg.reply(reply);
+        return;
+      } else {
+        // Inject repo list for Claude to resolve
+        const repoList = repoNames.join(", ");
+        parsed.args._availableRepos = repoNames;
+        parsed.rawText = `Available repos: ${repoList}\n\nThe user hasn't specified which repo. Based on their message, determine the correct repo and proceed. If unclear, ask them which repo they mean.\n\n${parsed.rawText}`;
+        // Use first repo as fallback — Claude will pick the right one from the prompt
+        parsed.repo = repoNames[0];
+      }
     } else {
       const reply = "You don't have access to any repos yet. Set one up:\n`init repo <name> <git-url> [branch]`\nExample: `init repo my-app git@github.com:user/my-app.git`";
       await msg.reply(reply);
@@ -389,10 +459,10 @@ async function handleMessage(msg: IncomingMessage) {
     return;
   }
 
-  // Check repo is configured
-  const repoConfig = config.repos[parsed.repo];
-  if (!repoConfig) {
-    await msg.reply(`Never heard of ${parsed.repo}. Check the config.`);
+  // Check repo exists — config overrides or registry
+  const repoInfo = getRepoInfo(parsed.repo);
+  if (!repoInfo) {
+    await msg.reply(`Never heard of ${parsed.repo}. Check the config or run GitHub sync.`);
     return;
   }
 
@@ -442,8 +512,8 @@ async function handleEvent(event: IncomingEvent, adapter: EventAdapter) {
     return;
   }
 
-  const repoConfig = config.repos[parsed.repo];
-  if (!repoConfig) {
+  const repoInfo = getRepoInfo(parsed.repo);
+  if (!repoInfo) {
     await adapter.respondToEvent(event.eventId, `Unknown repo: ${parsed.repo}.`);
     return;
   }
@@ -461,9 +531,9 @@ async function handleEvent(event: IncomingEvent, adapter: EventAdapter) {
 
 async function processTask(task: import("./queue").Task) {
   const isCreateProject = task.taskType === "create-project";
-  const repoConfig = isCreateProject ? null : config.repos[task.repo];
+  const repoInfo = isCreateProject ? null : getRepoInfo(task.repo);
 
-  if (!isCreateProject && !repoConfig) {
+  if (!isCreateProject && !repoInfo) {
     queue.fail(task.id, `Unknown repo: ${task.repo}`);
     return;
   }
@@ -483,14 +553,14 @@ async function processTask(task: import("./queue").Task) {
       await Bun.write(join(workDir, ".gitkeep"), "");
     } else {
       // Ensure repo is cloned and up to date
-      await repos.cloneIfNeeded(task.repo, repoConfig!.url);
-      await repos.pull(task.repo, repoConfig!.defaultBranch);
+      await repos.cloneIfNeeded(task.repo, repoInfo!.url);
+      await repos.pull(task.repo, repoInfo!.defaultBranch);
 
       // Create worktree
       workDir = await repos.createWorktree(
         task.repo,
         task.id,
-        repoConfig!.defaultBranch
+        repoInfo!.defaultBranch
       );
     }
 
@@ -599,6 +669,11 @@ async function main() {
   }
 
   logger.info("ove starting", { chatAdapters: adapters.length, eventAdapters: eventAdapters.length, runner: config.runner?.name || "claude" });
+
+  // Start GitHub repo sync (non-blocking)
+  startGitHubSync().catch((err) =>
+    logger.warn("initial github sync failed", { error: String(err) })
+  );
 
   for (const adapter of adapters) {
     await adapter.start(handleMessage);
