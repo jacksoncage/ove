@@ -1,9 +1,27 @@
 #!/usr/bin/env bun
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { validateConfig, runSetup } from "../src/setup";
+
+async function checkForUpdate(): Promise<void> {
+  try {
+    const pkgPath = join(import.meta.dir, "..", "package.json");
+    const { name, version: current } = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    const res = await fetch(`https://registry.npmjs.org/${name}/latest`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return;
+    const { version: latest } = await res.json() as { version: string };
+    if (latest && latest !== current) {
+      process.stdout.write(`\n  Update available: ${current} → ${latest}\n`);
+      process.stdout.write(`  Run: npm install -g ${name}\n\n`);
+    }
+  } catch {
+    // Silent fail — don't block startup for update checks
+  }
+}
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -23,7 +41,8 @@ if (command === "init") {
 }
 
 if (command === "start" || !command) {
-  process.stdout.write("\n  Checking config...\n");
+  await checkForUpdate();
+  process.stdout.write("  Checking config...\n");
   const { valid, issues } = validateConfig();
 
   if (!valid) {
