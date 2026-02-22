@@ -118,6 +118,9 @@ async function startGitHubSync() {
 // Reply callback map — stores original message for replying after task completion
 const pendingReplies = new Map<string, IncomingMessage>();
 
+// Track running processes for cancellation
+const runningProcesses = new Map<string, { abort: AbortController; task: import("./queue").Task }>();
+
 // Start adapters based on available env vars
 const adapters: ChatAdapter[] = [];
 
@@ -269,6 +272,8 @@ async function handleMessage(msg: IncomingMessage) {
       "• discuss <topic> — I'll brainstorm, but no promises I'll be nice",
       "• create project <name> [with template <type>]",
       "• init repo <name> <git-url> [branch] — set up a repo from chat",
+      "• tasks — see running and pending tasks",
+      "• cancel <id> — kill a running or pending task",
       "• status / history / clear",
       "• <task> every day/weekday at <time> [on <repo>] — schedule a recurring task",
       "• list schedules — see your scheduled tasks",
@@ -277,6 +282,69 @@ async function handleMessage(msg: IncomingMessage) {
     ].join("\n");
     await msg.reply(reply);
     sessions.addMessage(msg.userId, "assistant", reply);
+    return;
+  }
+
+  // List all running + pending tasks
+  if (parsed.type === "list-tasks") {
+    const tasks = queue.listActive();
+    if (tasks.length === 0) {
+      const reply = "Nothing running, nothing pending. Quiet. I like it.";
+      await msg.reply(reply);
+      return;
+    }
+    const running = tasks.filter((t) => t.status === "running");
+    const pending = tasks.filter((t) => t.status === "pending");
+    const lines: string[] = [];
+    if (running.length > 0) {
+      lines.push("Running:");
+      for (const t of running) {
+        const elapsed = Math.round((Date.now() - new Date(t.createdAt).getTime()) / 1000);
+        const min = Math.floor(elapsed / 60);
+        const sec = elapsed % 60;
+        const duration = min > 0 ? `${min}m ${sec}s` : `${sec}s`;
+        lines.push(`  ${t.id.slice(0, 7)} — "${t.prompt.slice(0, 60)}" on ${t.repo} (${duration})`);
+      }
+    }
+    if (pending.length > 0) {
+      lines.push("Pending:");
+      for (const t of pending) {
+        const busyRepo = running.some((r) => r.repo === t.repo);
+        const reason = busyRepo ? `waiting — ${t.repo} busy` : "waiting";
+        lines.push(`  ${t.id.slice(0, 7)} — "${t.prompt.slice(0, 60)}" on ${t.repo} (${reason})`);
+      }
+    }
+    const reply = lines.join("\n");
+    await msg.reply(reply);
+    return;
+  }
+
+  // Cancel a running task
+  if (parsed.type === "cancel-task") {
+    const prefix = parsed.args.taskId.toLowerCase();
+    // Find matching running process by ID prefix
+    let match: { abort: AbortController; task: import("./queue").Task } | undefined;
+    for (const [id, entry] of runningProcesses) {
+      if (id.toLowerCase().startsWith(prefix)) {
+        match = entry;
+        break;
+      }
+    }
+    if (!match) {
+      // Maybe it's a pending task — cancel from queue directly
+      const active = queue.listActive();
+      const pendingMatch = active.find((t) => t.id.toLowerCase().startsWith(prefix) && t.status === "pending");
+      if (pendingMatch) {
+        queue.cancel(pendingMatch.id);
+        await msg.reply(`Cancelled pending task ${pendingMatch.id.slice(0, 7)} on ${pendingMatch.repo}.`);
+        return;
+      }
+      await msg.reply(`No task found matching "${prefix}". Use /tasks to see what's running.`);
+      return;
+    }
+    match.abort.abort();
+    queue.cancel(match.task.id);
+    await msg.reply(`Killed task ${match.task.id.slice(0, 7)} on ${match.task.repo}. Gone.`);
     return;
   }
 
@@ -574,6 +642,9 @@ async function processTask(task: import("./queue").Task) {
     return;
   }
 
+  const abortController = new AbortController();
+  runningProcesses.set(task.id, { abort: abortController, task });
+
   const originalMsg = pendingReplies.get(task.id);
   const statusLog: string[] = [];
 
@@ -612,6 +683,7 @@ async function processTask(task: import("./queue").Task) {
       const runOpts = getRunnerOptsForRepo(task.repo, {
         maxTurns: config.claude.maxTurns,
         mcpConfigPath,
+        signal: abortController.signal,
       });
 
       const result = await taskRunner.run(
@@ -682,20 +754,28 @@ async function processTask(task: import("./queue").Task) {
     logger.error("task processing error", { taskId: task.id, error: String(err) });
     await originalMsg?.reply(`Task error: ${String(err).slice(0, 500)}`);
   } finally {
+    runningProcesses.delete(task.id);
     pendingReplies.delete(task.id);
   }
 }
 
-// Worker loop — polls queue every 2 seconds
+// Worker loop — runs up to maxConcurrent tasks in parallel, per-repo serialization via dequeue()
 async function workerLoop() {
+  const maxConcurrent = 5;
+
   while (true) {
-    try {
-      const task = queue.dequeue();
-      if (task) {
-        await processTask(task);
+    if (runningProcesses.size < maxConcurrent) {
+      try {
+        const task = queue.dequeue();
+        if (task) {
+          processTask(task).catch((err) =>
+            logger.error("worker task error", { taskId: task.id, error: String(err) })
+          );
+          continue; // try to grab another immediately
+        }
+      } catch (err) {
+        logger.error("worker loop error", { error: String(err) });
       }
-    } catch (err) {
-      logger.error("worker loop error", { error: String(err) });
     }
     await Bun.sleep(2000);
   }

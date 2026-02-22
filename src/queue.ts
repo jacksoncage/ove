@@ -115,6 +115,23 @@ export class TaskQueue {
     return row;
   }
 
+  listActive(limit: number = 20): Task[] {
+    const rows = this.db
+      .query(
+        `SELECT * FROM tasks WHERE status IN ('running', 'pending') ORDER BY created_at ASC LIMIT ?`
+      )
+      .all(limit) as any[];
+    return rows.map((r) => this.rowToTask(r));
+  }
+
+  cancel(id: string): boolean {
+    const result = this.db.run(
+      `UPDATE tasks SET status = 'failed', result = 'Cancelled', completed_at = ? WHERE id = ? AND status IN ('running', 'pending')`,
+      [new Date().toISOString(), id]
+    );
+    return result.changes > 0;
+  }
+
   resetStale(): number {
     const result = this.db.run(
       `UPDATE tasks SET status = 'failed', result = 'Interrupted — process restarted', completed_at = ? WHERE status = 'running'`,

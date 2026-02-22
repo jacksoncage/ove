@@ -663,9 +663,9 @@
       </div>
       <div class="feature">
         <div class="feature-label">06 &mdash; Manage</div>
-        <h3>Schedule Management</h3>
-        <p>List your schedules, remove the ones you don't need. Ove keeps track so you don't have to.</p>
-        <code>list schedules</code>
+        <h3>Task Management</h3>
+        <p>See what's running, what's queued, and kill anything that's gone sideways. Different repos run in parallel, same repo stays serial.</p>
+        <code>tasks</code> &nbsp; <code>cancel &lt;id&gt;</code>
       </div>
     </div>
 
@@ -776,6 +776,10 @@ sudo systemctl enable --now ove</pre>
       <dd>See your scheduled tasks</dd>
       <dt>remove schedule #N</dt>
       <dd>Remove a scheduled task</dd>
+      <dt>tasks</dt>
+      <dd>List running and pending tasks</dd>
+      <dt>cancel &lt;id&gt;</dt>
+      <dd>Kill a running or pending task</dd>
       <dt>status</dt>
       <dd>Queue stats</dd>
       <dt>history</dt>
@@ -789,16 +793,17 @@ sudo systemctl enable --now ove</pre>
 
   <section class="section">
     <h2>How It Works</h2>
-    <p class="section-note">Everything in order. One thing at a time. The way it should be.</p>
+    <p class="section-note">Parallel where it matters. Serial where it must be. Proper.</p>
 
     <ol class="pipeline">
       <li><span class="step-n">1</span><span class="step-arrow">&rsaquo;</span> Message arrives via Slack, WhatsApp, Telegram, Discord, CLI, HTTP API, or GitHub comment</li>
       <li><span class="step-n">2</span><span class="step-arrow">&rsaquo;</span> Router parses intent and extracts repo/args</li>
-      <li><span class="step-n">3</span><span class="step-arrow">&rsaquo;</span> Task gets queued in SQLite &mdash; one per repo at a time</li>
-      <li><span class="step-n">4</span><span class="step-arrow">&rsaquo;</span> Worker creates an isolated git worktree</li>
-      <li><span class="step-n">5</span><span class="step-arrow">&rsaquo;</span> Runs the configured runner (<code>claude -p</code> or <code>codex exec</code>) with streaming JSON output</li>
-      <li><span class="step-n">6</span><span class="step-arrow">&rsaquo;</span> Status updates stream back &mdash; chat edits, SSE, or GitHub comment</li>
-      <li><span class="step-n">7</span><span class="step-arrow">&rsaquo;</span> Result sent back, worktree cleaned up</li>
+      <li><span class="step-n">3</span><span class="step-arrow">&rsaquo;</span> Task gets queued in SQLite &mdash; one per repo at a time, different repos run in parallel</li>
+      <li><span class="step-n">4</span><span class="step-arrow">&rsaquo;</span> Worker loop picks up tasks concurrently (up to 5 parallel)</li>
+      <li><span class="step-n">5</span><span class="step-arrow">&rsaquo;</span> Each task gets an isolated git worktree</li>
+      <li><span class="step-n">6</span><span class="step-arrow">&rsaquo;</span> Runs the configured runner (<code>claude -p</code> or <code>codex exec</code>) with streaming JSON output</li>
+      <li><span class="step-n">7</span><span class="step-arrow">&rsaquo;</span> Status updates stream back &mdash; chat edits, SSE, or GitHub comment</li>
+      <li><span class="step-n">8</span><span class="step-arrow">&rsaquo;</span> Result sent back, worktree cleaned up &mdash; use <code>tasks</code> to monitor, <code>cancel &lt;id&gt;</code> to stop</li>
     </ol>
   </section>
 

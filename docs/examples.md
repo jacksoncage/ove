@@ -227,6 +227,32 @@ data: {"type":"done","result":"Validation complete. No issues."}
 
 **Web UI:** Open `http://localhost:3000` in a browser for a chat-style interface.
 
+## Task Management
+
+Tasks on different repos run in parallel (up to 5 concurrent). Same-repo tasks stay serial.
+
+**List running and pending tasks:**
+```
+alice: tasks
+ove:   Running:
+         abc1234 — "fix the login bug" on auth-service (2m 30s)
+         def4567 — "review PR #42" on infra (45s)
+       Pending:
+         ghi7890 — "add tests" on auth-service (waiting — auth-service busy)
+```
+
+**Cancel a task by short ID:**
+```
+alice: cancel abc1234
+ove:   Killed task abc1234 on auth-service. Gone.
+```
+
+**Cancel a pending task:**
+```
+alice: cancel ghi7890
+ove:   Cancelled pending task ghi7890 on auth-service.
+```
+
 ## Meta Commands
 
 ```
@@ -247,6 +273,8 @@ ove:   Commands:
        • validate <repo>
        • discuss <topic> — brainstorm ideas (no code changes)
        • create project <name> [with template <type>]
+       • tasks — see running and pending tasks
+       • cancel <id> — kill a running or pending task
        • <task> every day at <time> — schedule a recurring task
        • list schedules — see your scheduled tasks
        • remove schedule #N — remove a scheduled task

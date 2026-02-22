@@ -2,6 +2,7 @@ export interface RunOptions {
   maxTurns: number;
   mcpConfigPath?: string;
   model?: string;
+  signal?: AbortSignal;
 }
 
 export interface RunResult {

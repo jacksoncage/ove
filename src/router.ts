@@ -13,7 +13,9 @@ export type MessageType =
   | "clear"
   | "schedule"
   | "list-schedules"
-  | "remove-schedule";
+  | "remove-schedule"
+  | "list-tasks"
+  | "cancel-task";
 
 export interface ParsedMessage {
   type: MessageType;
@@ -37,6 +39,11 @@ export function parseMessage(text: string): ParsedMessage {
   if (lower === "history" || lower === "my tasks") return { type: "history", args: {}, rawText: trimmed };
   if (lower === "help") return { type: "help", args: {}, rawText: trimmed };
   if (lower === "clear" || lower === "reset") return { type: "clear", args: {}, rawText: trimmed };
+
+  // Task management
+  if (lower === "tasks" || lower === "/tasks") return { type: "list-tasks", args: {}, rawText: trimmed };
+  const cancelMatch = trimmed.match(/^(?:\/)?cancel\s+(\S+)$/i);
+  if (cancelMatch) return { type: "cancel-task", args: { taskId: cancelMatch[1] }, rawText: trimmed };
 
   // Natural language status inquiries — short messages asking about progress
   if (isStatusInquiry(lower)) return { type: "status", args: {}, rawText: trimmed };

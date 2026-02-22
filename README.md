@@ -56,6 +56,10 @@ Scheduling:
 list schedules              See your scheduled tasks
 remove schedule #N          Remove a scheduled task
 
+Task management:
+tasks                       List running and pending tasks
+cancel <id>                 Kill a running or pending task
+
 Meta:
 status                      Queue stats
 history                     Recent tasks
@@ -202,11 +206,12 @@ bun test    # 150 tests
 1. Message arrives via any transport (Slack, WhatsApp, Telegram, Discord, CLI, HTTP API, or GitHub comment)
 2. Chat adapters use `handleMessage`, event adapters use `handleEvent`
 3. Router parses intent and extracts repo/args
-4. Task gets queued in SQLite (one per repo at a time)
-5. Worker creates an isolated git worktree
-6. Runs the configured agent runner (`claude -p` or `codex exec`) with streaming JSON output
-7. Status updates stream back (chat: edits a message, HTTP: SSE, GitHub: single comment)
-8. Result sent back, worktree cleaned up
+4. Task gets queued in SQLite (one per repo at a time, different repos run in parallel)
+5. Worker loop picks up tasks concurrently (up to 5 parallel tasks across different repos)
+6. Each task gets an isolated git worktree
+7. Runs the configured agent runner (`claude -p` or `codex exec`) with streaming JSON output
+8. Status updates stream back (chat: edits a message, HTTP: SSE, GitHub: single comment)
+9. Result sent back, worktree cleaned up
 
 See [example conversations](docs/examples.md) for all flows.
 

@@ -79,6 +79,10 @@ export class CodexRunner implements AgentRunner {
       stderr: "pipe",
     });
 
+    if (opts.signal) {
+      opts.signal.addEventListener("abort", () => proc.kill(), { once: true });
+    }
+
     let lastAgentMessage: string | null = null;
     let errorMessage: string | null = null;
     const decoder = new TextDecoder();

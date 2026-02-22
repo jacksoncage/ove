@@ -53,6 +53,10 @@ export class ClaudeRunner implements AgentRunner {
       env: { ...process.env, CI: "1" },
     });
 
+    if (opts.signal) {
+      opts.signal.addEventListener("abort", () => proc.kill(), { once: true });
+    }
+
     let resultText: string | null = null;
     let lastTextBlock: string | null = null;
     const decoder = new TextDecoder();
