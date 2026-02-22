@@ -592,6 +592,12 @@ async function workerLoop() {
 
 // Main
 async function main() {
+  // Reset tasks stuck as "running" from a previous interrupted session
+  const staleCount = queue.resetStale();
+  if (staleCount > 0) {
+    logger.info("reset stale tasks", { count: staleCount });
+  }
+
   logger.info("ove starting", { chatAdapters: adapters.length, eventAdapters: eventAdapters.length, runner: config.runner?.name || "claude" });
 
   for (const adapter of adapters) {

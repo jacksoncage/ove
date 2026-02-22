@@ -149,6 +149,31 @@ describe("parseMessage", () => {
     expect(result.type).not.toBe("init-repo");
   });
 
+  it("parses Telegram /start as help", () => {
+    const result = parseMessage("/start");
+    expect(result.type).toBe("help");
+  });
+
+  it("parses Telegram /help as help", () => {
+    const result = parseMessage("/help");
+    expect(result.type).toBe("help");
+  });
+
+  it("parses Telegram /status as status", () => {
+    const result = parseMessage("/status");
+    expect(result.type).toBe("status");
+  });
+
+  it("parses Telegram /history as history", () => {
+    const result = parseMessage("/history");
+    expect(result.type).toBe("history");
+  });
+
+  it("parses Telegram /clear as clear", () => {
+    const result = parseMessage("/clear");
+    expect(result.type).toBe("clear");
+  });
+
   it("falls back to free-form for unrecognized input", () => {
     const result = parseMessage("what does the auth middleware do in my-app");
     expect(result.type).toBe("free-form");

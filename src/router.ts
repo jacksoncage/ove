@@ -26,6 +26,13 @@ export function parseMessage(text: string): ParsedMessage {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
 
+  // Handle Telegram /commands — strip leading slash
+  if (lower === "/start") return { type: "help", args: {}, rawText: trimmed };
+  if (lower === "/help") return { type: "help", args: {}, rawText: trimmed };
+  if (lower === "/status") return { type: "status", args: {}, rawText: trimmed };
+  if (lower === "/history") return { type: "history", args: {}, rawText: trimmed };
+  if (lower === "/clear") return { type: "clear", args: {}, rawText: trimmed };
+
   if (lower === "status") return { type: "status", args: {}, rawText: trimmed };
   if (lower === "history" || lower === "my tasks") return { type: "history", args: {}, rawText: trimmed };
   if (lower === "help") return { type: "help", args: {}, rawText: trimmed };

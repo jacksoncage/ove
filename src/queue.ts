@@ -115,6 +115,14 @@ export class TaskQueue {
     return row;
   }
 
+  resetStale(): number {
+    const result = this.db.run(
+      `UPDATE tasks SET status = 'failed', result = 'Interrupted — Ove restarted', completed_at = ? WHERE status = 'running'`,
+      [new Date().toISOString()]
+    );
+    return result.changes;
+  }
+
   private rowToTask(row: any): Task {
     return {
       id: row.id,

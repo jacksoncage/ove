@@ -1,6 +1,12 @@
 import { join, resolve } from "node:path";
 import { logger } from "./logger";
 
+const GIT_TIMEOUT = 60_000; // 60 seconds
+const GIT_ENV = {
+  ...process.env,
+  GIT_SSH_COMMAND: "ssh -o ConnectTimeout=10 -o BatchMode=yes",
+};
+
 export class RepoManager {
   constructor(private reposDir: string) {}
 
@@ -23,10 +29,14 @@ export class RepoManager {
     const proc = Bun.spawn(["git", "clone", url, path], {
       stdout: "pipe",
       stderr: "pipe",
+      env: GIT_ENV,
     });
-    const exitCode = await proc.exited;
+    const exitCode = await Promise.race([
+      proc.exited,
+      Bun.sleep(GIT_TIMEOUT).then(() => { proc.kill(); return -1; }),
+    ]);
     if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text();
+      const stderr = exitCode === -1 ? "git clone timed out" : await new Response(proc.stderr).text();
       throw new Error(`git clone failed: ${stderr}`);
     }
   }
@@ -38,11 +48,15 @@ export class RepoManager {
       cwd: path,
       stdout: "pipe",
       stderr: "pipe",
+      env: GIT_ENV,
     });
-    const exitCode = await proc.exited;
+    const exitCode = await Promise.race([
+      proc.exited,
+      Bun.sleep(GIT_TIMEOUT).then(() => { proc.kill(); return -1; }),
+    ]);
     if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text();
-      logger.warn("git pull failed", { repo: repoName, error: stderr });
+      const msg = exitCode === -1 ? "git pull timed out" : await new Response(proc.stderr).text();
+      logger.warn("git pull failed", { repo: repoName, error: msg });
     }
   }
 
