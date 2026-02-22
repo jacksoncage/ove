@@ -11,9 +11,13 @@ export class WhatsAppAdapter implements ChatAdapter {
   private sock: WASocket | null = null;
   private onMessage?: (msg: IncomingMessage) => void;
   private authDir: string;
+  private phoneNumber?: string;
+  private reconnectAttempt = 0;
+  private sentByBot = new Set<string>();
 
-  constructor(authDir: string = "./auth/whatsapp") {
-    this.authDir = authDir;
+  constructor(opts: { authDir?: string; phoneNumber?: string } = {}) {
+    this.authDir = opts.authDir ?? "./auth/whatsapp";
+    this.phoneNumber = opts.phoneNumber;
   }
 
   async start(onMessage: (msg: IncomingMessage) => void): Promise<void> {
@@ -23,28 +27,56 @@ export class WhatsAppAdapter implements ChatAdapter {
 
     this.sock = makeWASocket({
       auth: state,
-      printQRInTerminal: true,
     });
 
     this.sock.ev.on("creds.update", saveCreds);
 
-    this.sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
+    let pairingRequested = false;
+
+    this.sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
+      // Request pairing code when server is ready (sends qr event)
+      if (qr && this.phoneNumber && !pairingRequested) {
+        pairingRequested = true;
+        try {
+          const phone = this.phoneNumber.replace(/[^0-9]/g, "");
+          const code = await this.sock!.requestPairingCode(phone);
+          logger.info(`whatsapp pairing code: ${code}`, { phone });
+          console.log(`\n  WhatsApp pairing code: ${code}`);
+          console.log(`  Enter this code on your phone: WhatsApp → Linked Devices → Link a Device\n`);
+        } catch (err) {
+          logger.error("failed to request pairing code", { error: String(err) });
+        }
+      }
+
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         if (statusCode !== DisconnectReason.loggedOut) {
-          logger.warn("whatsapp disconnected, reconnecting...", { statusCode });
-          this.start(onMessage);
+          this.reconnectAttempt++;
+          const delay = Math.min(2000 * this.reconnectAttempt, 30_000);
+          logger.warn("whatsapp disconnected, reconnecting...", { statusCode, delay });
+          setTimeout(() => this.start(onMessage), delay);
         } else {
           logger.error("whatsapp logged out");
         }
       } else if (connection === "open") {
+        this.reconnectAttempt = 0;
         logger.info("whatsapp adapter connected");
       }
     });
 
     this.sock.ev.on("messages.upsert", ({ messages }) => {
       for (const waMsg of messages) {
-        if (!waMsg.message || waMsg.key.fromMe) continue;
+        if (!waMsg.message) continue;
+
+        // Skip messages sent by the bot (replies/status updates)
+        const msgId = waMsg.key.id;
+        if (msgId && this.sentByBot.has(msgId)) {
+          this.sentByBot.delete(msgId);
+          continue;
+        }
+
+        // Skip messages from others (not our phone) — we only process our own commands
+        if (!waMsg.key.fromMe) continue;
 
         const text =
           waMsg.message.conversation ||
@@ -54,7 +86,10 @@ export class WhatsAppAdapter implements ChatAdapter {
         const jid = waMsg.key.remoteJid;
         if (!jid) continue;
 
-        const phone = jid.split("@")[0];
+        // For fromMe messages, use our configured phone number
+        const phone = waMsg.key.fromMe
+          ? (this.phoneNumber?.replace(/[^0-9]/g, "") ?? jid.split("@")[0])
+          : jid.split("@")[0];
         const userId = `whatsapp:${phone}`;
 
         // Batch status updates: at most once per 10 seconds
@@ -64,7 +99,8 @@ export class WhatsAppAdapter implements ChatAdapter {
 
         const flushStatus = async () => {
           if (pendingStatus && this.sock) {
-            await this.sock.sendMessage(jid, { text: pendingStatus });
+            const sent = await this.sock.sendMessage(jid, { text: pendingStatus });
+            if (sent?.key?.id) this.sentByBot.add(sent.key.id);
             lastSentAt = Date.now();
             pendingStatus = null;
           }
@@ -82,7 +118,8 @@ export class WhatsAppAdapter implements ChatAdapter {
               batchTimer = null;
               pendingStatus = null;
             }
-            await this.sock?.sendMessage(jid, { text: replyText });
+            const sent = await this.sock?.sendMessage(jid, { text: replyText });
+            if (sent?.key?.id) this.sentByBot.add(sent.key.id);
           },
           updateStatus: async (statusText: string) => {
             pendingStatus = statusText;
@@ -113,6 +150,7 @@ export class WhatsAppAdapter implements ChatAdapter {
   async sendToUser(userId: string, text: string): Promise<void> {
     const phone = userId.replace("whatsapp:", "");
     const jid = `${phone}@s.whatsapp.net`;
-    await this.sock?.sendMessage(jid, { text });
+    const sent = await this.sock?.sendMessage(jid, { text });
+    if (sent?.key?.id) this.sentByBot.add(sent.key.id);
   }
 }

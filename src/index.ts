@@ -126,7 +126,9 @@ if (process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN) {
 }
 
 if (process.env.WHATSAPP_ENABLED === "true") {
-  adapters.push(new WhatsAppAdapter());
+  adapters.push(new WhatsAppAdapter({
+    phoneNumber: process.env.WHATSAPP_PHONE,
+  }));
 }
 
 if (process.env.TELEGRAM_BOT_TOKEN) {
