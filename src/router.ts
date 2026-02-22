@@ -131,6 +131,10 @@ function isStatusInquiry(lower: string): boolean {
   return STATUS_PATTERNS.some((p) => p.test(lower));
 }
 
+export function buildCronPrompt(prompt: string): string {
+  return `This is an autonomous scheduled task. Do not ask questions — make your own decisions and proceed with the work. If there are multiple options, pick the best one and go.\n\n${prompt}`;
+}
+
 export function buildContextualPrompt(
   parsed: ParsedMessage,
   history: { role: string; content: string }[],

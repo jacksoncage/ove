@@ -4,7 +4,7 @@ import { TaskQueue } from "./queue";
 import { RepoManager } from "./repos";
 import { ClaudeRunner } from "./runners/claude";
 import { CodexRunner } from "./runners/codex";
-import { parseMessage, buildContextualPrompt } from "./router";
+import { parseMessage, buildContextualPrompt, buildCronPrompt } from "./router";
 import { SlackAdapter } from "./adapters/slack";
 import { WhatsAppAdapter } from "./adapters/whatsapp";
 import { CliAdapter } from "./adapters/cli";
@@ -725,7 +725,7 @@ async function main() {
       queue.enqueue({
         userId: cronTask.userId,
         repo: cronTask.repo,
-        prompt: cronTask.prompt,
+        prompt: buildCronPrompt(cronTask.prompt),
       });
     }
   );

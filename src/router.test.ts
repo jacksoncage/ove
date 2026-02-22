@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { parseMessage, buildPrompt } from "./router";
+import { parseMessage, buildPrompt, buildCronPrompt } from "./router";
 
 describe("parseMessage", () => {
   it("parses PR review command", () => {
@@ -293,5 +293,24 @@ describe("buildPrompt", () => {
   it("builds free-form prompt as raw text", () => {
     const prompt = buildPrompt({ type: "free-form", args: {}, rawText: "explain the auth flow" });
     expect(prompt).toBe("explain the auth flow");
+  });
+});
+
+describe("buildCronPrompt", () => {
+  it("wraps prompt with autonomy instructions", () => {
+    const prompt = buildCronPrompt("simplify code and create a PR");
+    expect(prompt).toContain("simplify code and create a PR");
+    expect(prompt).toContain("autonomous");
+  });
+
+  it("instructs not to ask questions", () => {
+    const prompt = buildCronPrompt("run tests");
+    expect(prompt).toMatch(/do not ask|never ask|don't ask/i);
+  });
+
+  it("includes the original prompt verbatim", () => {
+    const original = "check for security vulnerabilities and fix them";
+    const prompt = buildCronPrompt(original);
+    expect(prompt).toContain(original);
   });
 });
