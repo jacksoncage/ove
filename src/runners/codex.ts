@@ -116,7 +116,9 @@ export class CodexRunner implements AgentRunner {
             if (event.type === "turn.failed") {
               errorMessage = event.error?.message || "Turn failed";
             }
-          } catch {}
+          } catch {
+            // Non-JSON line in stream output — skip
+          }
         }
       }
     } finally {

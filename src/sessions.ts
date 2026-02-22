@@ -6,6 +6,12 @@ export interface ChatMessage {
   timestamp: string;
 }
 
+interface ChatMessageRow {
+  role: string;
+  content: string;
+  created_at: string;
+}
+
 export class SessionStore {
   private db: Database;
 
@@ -38,12 +44,12 @@ export class SessionStore {
          ORDER BY id DESC
          LIMIT ?`
       )
-      .all(userId, limit) as any[];
+      .all(userId, limit) as ChatMessageRow[];
 
     return rows
       .reverse()
       .map((r) => ({
-        role: r.role,
+        role: r.role as "user" | "assistant",
         content: r.content,
         timestamp: r.created_at,
       }));

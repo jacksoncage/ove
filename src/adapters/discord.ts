@@ -1,17 +1,7 @@
 import { Client, GatewayIntentBits, type Message } from "discord.js";
 import type { ChatAdapter, IncomingMessage } from "./types";
 import { logger } from "../logger";
-
-function debounce<T extends (...args: any[]) => any>(fn: T, ms: number): T {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  return ((...args: any[]) => {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      timer = null;
-      fn(...args);
-    }, ms);
-  }) as any as T;
-}
+import { debounce } from "./debounce";
 
 export class DiscordAdapter implements ChatAdapter {
   private client: Client;

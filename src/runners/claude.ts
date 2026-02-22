@@ -88,7 +88,9 @@ export class ClaudeRunner implements AgentRunner {
                 }
               }
             }
-          } catch {}
+          } catch {
+            // Non-JSON line in stream output — skip
+          }
         }
       }
     } finally {

@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
-import { loadConfig, isAuthorized, getUserRepos, addRepo, addUser } from "./config";
+import { loadConfig } from "./config";
 import { TaskQueue } from "./queue";
 import { RepoManager } from "./repos";
 import { ClaudeRunner } from "./runners/claude";
 import { CodexRunner } from "./runners/codex";
-import { parseMessage, buildContextualPrompt, buildCronPrompt } from "./router";
+import { buildCronPrompt } from "./router";
 import { SlackAdapter } from "./adapters/slack";
 import { WhatsAppAdapter } from "./adapters/whatsapp";
 import { CliAdapter } from "./adapters/cli";
@@ -14,28 +14,15 @@ import { HttpApiAdapter } from "./adapters/http";
 import { GitHubAdapter } from "./adapters/github";
 import type { ChatAdapter, IncomingMessage } from "./adapters/types";
 import type { EventAdapter, IncomingEvent } from "./adapters/types";
-import type { AgentRunner, RunOptions, StatusEvent } from "./runner";
+import type { AgentRunner, RunOptions } from "./runner";
 import { logger } from "./logger";
 import { RepoRegistry, syncGitHub } from "./repo-registry";
 import { SessionStore } from "./sessions";
 import { startCronLoop } from "./cron";
 import { ScheduleStore } from "./schedules";
-import { parseSchedule } from "./schedule-parser";
-import { unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-const OVE_PERSONA = `You are Ove, a grumpy but deeply competent Swedish developer. You're modeled after the character from Fredrik Backman's "A Man Called Ove" — you complain about things, mutter about how people don't know what they're doing, but you always help and you always do excellent work. You have strong opinions about code quality.
-
-Personality traits:
-- Grumble before helping, but always help thoroughly
-- Short, direct sentences. No fluff.
-- Occasionally mutter about "nowadays people" or how things were better before
-- Take pride in doing things properly — no shortcuts
-- Reluctantly kind. You care more than you let on.
-- Sprinkle in the occasional Swedish word (fan, för helvete, herregud, mja, nåväl, jo)
-
-Keep the personality subtle in code output — don't let it interfere with code quality. The grumpiness goes in your commentary, not in the code itself. When doing code reviews or fixes, be thorough and meticulous like Ove would be.`;
+import { createMessageHandler, createEventHandler } from "./handlers";
+import { createWorker } from "./worker";
+import type { Task } from "./queue";
 
 const config = loadConfig();
 const db = new Database(process.env.DB_PATH || "./ove.db");
@@ -104,10 +91,8 @@ async function startGitHubSync() {
   if (!config.github) return;
   const interval = config.github.syncInterval || 1_800_000;
 
-  // Initial sync
   await syncGitHub(repoRegistry, config.github.orgs);
 
-  // Recurring sync
   setInterval(() => {
     syncGitHub(repoRegistry, config.github!.orgs).catch((err) =>
       logger.warn("github sync failed", { error: String(err) })
@@ -115,11 +100,10 @@ async function startGitHubSync() {
   }, interval);
 }
 
-// Reply callback map — stores original message for replying after task completion
+// Shared state maps
 const pendingReplies = new Map<string, IncomingMessage>();
-
-// Track running processes for cancellation
-const runningProcesses = new Map<string, { abort: AbortController; task: import("./queue").Task }>();
+const pendingEventReplies = new Map<string, { adapter: EventAdapter; event: IncomingEvent }>();
+const runningProcesses = new Map<string, { abort: AbortController; task: Task }>();
 
 // Start adapters based on available env vars
 const adapters: ChatAdapter[] = [];
@@ -166,624 +150,8 @@ if (process.env.CLI_MODE === "true" || (adapters.length === 0 && eventAdapters.l
   adapters.push(new CliAdapter(cliUserId));
 }
 
-// Platform-specific formatting hints for Claude output
-const PLATFORM_FORMAT_HINTS: Record<string, string> = {
-  telegram: "Format output for Telegram: use *bold* for emphasis, `code` for inline code, ```code blocks```. No markdown tables. Use simple bulleted lists with • instead. Keep it concise.",
-  slack: "Format output for Slack: use *bold*, no markdown tables. Use simple bulleted lists with • instead. Keep it concise.",
-  discord: "Format output for Discord: use **bold**, no wide tables. Use simple bulleted lists. Keep under 2000 chars.",
-  whatsapp: "Format output for WhatsApp: use *bold*, no markdown tables or code blocks. Use simple bulleted lists with • instead.",
-  cli: "Format output using markdown. Tables are fine.",
-};
-
-// Platform-specific message size limits
-const MESSAGE_LIMITS: Record<string, number> = {
-  slack: 3900,
-  whatsapp: 60000,
-  cli: Infinity,
-  telegram: 4096,
-  discord: 2000,
-};
-
-function splitAndReply(text: string, platform: string): string[] {
-  const limit = MESSAGE_LIMITS[platform] || 3900;
-  if (text.length <= limit) return [text];
-  const parts: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= limit) {
-      parts.push(remaining);
-      break;
-    }
-    // Try to split at a newline near the limit
-    let splitAt = remaining.lastIndexOf("\n", limit);
-    if (splitAt < limit * 0.5) splitAt = limit;
-    parts.push(remaining.slice(0, splitAt));
-    remaining = remaining.slice(splitAt).replace(/^\n/, "");
-  }
-  return parts;
-}
-
-function formatStatusLog(log: string[]): string {
-  return log.slice(-10).map((l) => `> ${l}`).join("\n");
-}
-
-async function handleMessage(msg: IncomingMessage) {
-  // Store user message in session
-  sessions.addMessage(msg.userId, "user", msg.text);
-
-  const parsed = parseMessage(msg.text);
-
-  // Handle clear/reset command
-  if (parsed.type === "clear") {
-    sessions.clear(msg.userId);
-    await msg.reply("Conversation cleared.");
-    return;
-  }
-
-  // Handle non-task commands
-  if (parsed.type === "status") {
-    const userTasks = queue.listByUser(msg.userId, 5);
-    const running = userTasks.find((t) => t.status === "running");
-
-    let reply: string;
-    if (running) {
-      const elapsed = Math.round((Date.now() - new Date(running.createdAt).getTime()) / 1000);
-      const min = Math.floor(elapsed / 60);
-      const sec = elapsed % 60;
-      const duration = min > 0 ? `${min}m ${sec}s` : `${sec}s`;
-      reply = `Working on ${running.repo} (${duration})...`;
-    } else {
-      const lastDone = userTasks.find((t) => t.status === "completed");
-      if (lastDone) {
-        reply = `Nothing running. Last task on ${lastDone.repo} completed.`;
-      } else {
-        const stats = queue.stats();
-        reply = `${stats.pending} pending, ${stats.running} running, ${stats.completed} done, ${stats.failed} failed.`;
-      }
-    }
-    await msg.reply(reply);
-    sessions.addMessage(msg.userId, "assistant", reply);
-    return;
-  }
-
-  if (parsed.type === "history") {
-    const tasks = queue.listByUser(msg.userId, 5);
-    if (tasks.length === 0) {
-      await msg.reply("No recent tasks.");
-      sessions.addMessage(msg.userId, "assistant", "No recent tasks.");
-      return;
-    }
-    const lines = tasks.map(
-      (t) => `• [${t.status}] ${t.prompt.slice(0, 80)} (${t.repo})`
-    );
-    const reply = `Recent tasks:\n${lines.join("\n")}`;
-    await msg.reply(reply);
-    sessions.addMessage(msg.userId, "assistant", reply);
-    return;
-  }
-
-  if (parsed.type === "help") {
-    const reply = [
-      "Available commands:",
-      "• review PR #N on <repo> — I'll find every problem",
-      "• fix issue #N on <repo> — I'll fix it properly",
-      "• simplify <path> in <repo> — clean up your mess",
-      "• validate <repo> — run tests, unlike some people",
-      "• discuss <topic> — I'll brainstorm, but no promises I'll be nice",
-      "• create project <name> [with template <type>]",
-      "• init repo <name> <git-url> [branch] — set up a repo from chat",
-      "• tasks — see running and pending tasks",
-      "• cancel <id> — kill a running or pending task",
-      "• status / history / clear",
-      "• <task> every day/weekday at <time> [on <repo>] — schedule a recurring task",
-      "• list schedules — see your scheduled tasks",
-      "• remove schedule #N — remove a scheduled task",
-      "• Or just ask me whatever. I'll figure it out.",
-    ].join("\n");
-    await msg.reply(reply);
-    sessions.addMessage(msg.userId, "assistant", reply);
-    return;
-  }
-
-  // List all running + pending tasks
-  if (parsed.type === "list-tasks") {
-    const tasks = queue.listActive();
-    if (tasks.length === 0) {
-      const reply = "Nothing running, nothing pending. Quiet. I like it.";
-      await msg.reply(reply);
-      return;
-    }
-    const running = tasks.filter((t) => t.status === "running");
-    const pending = tasks.filter((t) => t.status === "pending");
-    const lines: string[] = [];
-    if (running.length > 0) {
-      lines.push("Running:");
-      for (const t of running) {
-        const elapsed = Math.round((Date.now() - new Date(t.createdAt).getTime()) / 1000);
-        const min = Math.floor(elapsed / 60);
-        const sec = elapsed % 60;
-        const duration = min > 0 ? `${min}m ${sec}s` : `${sec}s`;
-        lines.push(`  ${t.id.slice(0, 7)} — "${t.prompt.slice(0, 60)}" on ${t.repo} (${duration})`);
-      }
-    }
-    if (pending.length > 0) {
-      lines.push("Pending:");
-      for (const t of pending) {
-        const busyRepo = running.some((r) => r.repo === t.repo);
-        const reason = busyRepo ? `waiting — ${t.repo} busy` : "waiting";
-        lines.push(`  ${t.id.slice(0, 7)} — "${t.prompt.slice(0, 60)}" on ${t.repo} (${reason})`);
-      }
-    }
-    const reply = lines.join("\n");
-    await msg.reply(reply);
-    return;
-  }
-
-  // Cancel a running task
-  if (parsed.type === "cancel-task") {
-    const prefix = parsed.args.taskId.toLowerCase();
-    // Find matching running process by ID prefix
-    let match: { abort: AbortController; task: import("./queue").Task } | undefined;
-    for (const [id, entry] of runningProcesses) {
-      if (id.toLowerCase().startsWith(prefix)) {
-        match = entry;
-        break;
-      }
-    }
-    if (!match) {
-      // Maybe it's a pending task — cancel from queue directly
-      const active = queue.listActive();
-      const pendingMatch = active.find((t) => t.id.toLowerCase().startsWith(prefix) && t.status === "pending");
-      if (pendingMatch) {
-        queue.cancel(pendingMatch.id);
-        await msg.reply(`Cancelled pending task ${pendingMatch.id.slice(0, 7)} on ${pendingMatch.repo}.`);
-        return;
-      }
-      await msg.reply(`No task found matching "${prefix}". Use /tasks to see what's running.`);
-      return;
-    }
-    match.abort.abort();
-    queue.cancel(match.task.id);
-    await msg.reply(`Killed task ${match.task.id.slice(0, 7)} on ${match.task.repo}. Gone.`);
-    return;
-  }
-
-  // List schedules
-  if (parsed.type === "list-schedules") {
-    const userSchedules = schedules.listByUser(msg.userId);
-    if (userSchedules.length === 0) {
-      const reply = "No schedules. You haven't asked me to do anything on a timer yet.";
-      await msg.reply(reply);
-      sessions.addMessage(msg.userId, "assistant", reply);
-      return;
-    }
-    const lines = userSchedules.map(
-      (s) => `#${s.id} — ${s.prompt} on ${s.repo} — ${s.description || s.schedule}`
-    );
-    const reply = `Your schedules:\n${lines.join("\n")}`;
-    await msg.reply(reply);
-    sessions.addMessage(msg.userId, "assistant", reply);
-    return;
-  }
-
-  // Remove schedule
-  if (parsed.type === "remove-schedule") {
-    const id = parsed.args.scheduleId;
-    const removed = schedules.remove(msg.userId, id);
-    const reply = removed
-      ? `Schedule #${id} removed. One less thing for me to do.`
-      : `Schedule #${id} not found or not yours. I don't delete other people's things.`;
-    await msg.reply(reply);
-    sessions.addMessage(msg.userId, "assistant", reply);
-    return;
-  }
-
-  // Create schedule
-  if (parsed.type === "schedule") {
-    await msg.updateStatus("Parsing your schedule...");
-    const rawRepos = getUserRepos(config, msg.userId);
-    const userRepos = rawRepos.includes("*") ? repoRegistry.getAllNames() : rawRepos;
-
-    if (userRepos.length === 0) {
-      await msg.reply("You don't have access to any repos. Set one up first with `init repo <name> <git-url>`.");
-      return;
-    }
-
-    const result = await parseSchedule(msg.text, userRepos);
-
-    if (!result) {
-      await msg.reply("Couldn't figure out that schedule. Try something like: 'lint and check every day at 9 on my-app'");
-      sessions.addMessage(msg.userId, "assistant", "Failed to parse schedule.");
-      return;
-    }
-
-    // Resolve repo
-    let repo = result.repo;
-    if (!repo || !userRepos.includes(repo)) {
-      if (parsed.repo && userRepos.includes(parsed.repo)) {
-        repo = parsed.repo;
-      } else if (userRepos.length === 1) {
-        repo = userRepos[0];
-      } else {
-        const reply = `Which repo? You have: ${userRepos.join(", ")}. Say it again with 'on <repo>'.`;
-        await msg.reply(reply);
-        sessions.addMessage(msg.userId, "assistant", reply);
-        return;
-      }
-    }
-
-    const id = schedules.create({
-      userId: msg.userId,
-      repo,
-      prompt: result.prompt,
-      schedule: result.schedule,
-      description: result.description,
-    });
-
-    const reply = `Schedule #${id} created: "${result.prompt}" on ${repo} ${result.description}.`;
-    await msg.reply(reply);
-    sessions.addMessage(msg.userId, "assistant", reply);
-    return;
-  }
-
-  // Discuss runs inline — no queue, no worktree
-  if (parsed.type === "discuss") {
-    const history = sessions.getHistory(msg.userId, 6);
-    const prompt = buildContextualPrompt(parsed, history, OVE_PERSONA);
-
-    await msg.updateStatus("Thinking...");
-
-    try {
-      const discussRunner = getRunner(config.runner?.name);
-      const result = await discussRunner.run(
-        prompt,
-        config.reposDir,
-        { maxTurns: 5 },
-        (event) => {
-          if (event.kind === "text") {
-            msg.updateStatus(event.text.slice(0, 200));
-          }
-        }
-      );
-
-      const parts = splitAndReply(result.output, msg.platform);
-      for (const part of parts) {
-        await msg.reply(part);
-      }
-      sessions.addMessage(msg.userId, "assistant", result.output.slice(0, 500));
-    } catch (err) {
-      await msg.reply(`Discussion error: ${String(err).slice(0, 500)}`);
-    }
-    return;
-  }
-
-  // Create-project doesn't need an existing repo
-  if (parsed.type === "create-project") {
-    const projectName = parsed.args.name;
-    const history = sessions.getHistory(msg.userId, 6);
-    const prompt = buildContextualPrompt(parsed, history, OVE_PERSONA);
-
-    const taskId = queue.enqueue({
-      userId: msg.userId,
-      repo: projectName,
-      prompt,
-      taskType: "create-project",
-    });
-
-    pendingReplies.set(taskId, msg);
-    await msg.reply(`Creating "${projectName}"...`);
-    logger.info("task enqueued", { taskId, type: "create-project", name: projectName });
-    return;
-  }
-
-  // Init repo — onboarding a new repo from chat
-  if (parsed.type === "init-repo") {
-    const { name, url, branch } = parsed.args;
-
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-      await msg.reply("Repo name must be alphanumeric, dashes, or underscores. Try again.");
-      return;
-    }
-
-    if (config.repos[name]) {
-      // Repo exists — just grant access
-      addUser(config, msg.userId, msg.userId, [name]);
-      const reply = `Repo "${name}" already exists. I've added you to it. Go ahead.`;
-      await msg.reply(reply);
-      sessions.addMessage(msg.userId, "assistant", reply);
-      return;
-    }
-
-    addRepo(config, name, url, branch);
-    addUser(config, msg.userId, msg.userId, [name]);
-    const reply = `Added repo "${name}" (${url}, branch: ${branch}).`;
-    await msg.reply(reply);
-    sessions.addMessage(msg.userId, "assistant", reply);
-    return;
-  }
-
-  // If the repo hint doesn't match a known repo, clear it and let auto-resolution handle it
-  if (parsed.repo && !getRepoInfo(parsed.repo)) {
-    parsed.repo = undefined;
-  }
-
-  // Need a repo for task commands
-  if (!parsed.repo) {
-    const userRepos = getUserRepos(config, msg.userId);
-    const hasWildcard = userRepos.includes("*");
-
-    if (!hasWildcard && userRepos.length === 1) {
-      parsed.repo = userRepos[0];
-    } else if (hasWildcard || userRepos.length > 1) {
-      const repoNames = hasWildcard ? repoRegistry.getAllNames() : userRepos;
-
-      if (repoNames.length === 1) {
-        parsed.repo = repoNames[0];
-      } else if (repoNames.length === 0) {
-        const reply = "No repos discovered yet. Set one up with `init repo <name> <git-url>` or configure GitHub sync.";
-        await msg.reply(reply);
-        return;
-      } else {
-        // Multiple repos — run inline (like discuss) with repo list context
-        // Claude answers from knowledge + gh CLI, no worktree needed
-        const repoList = repoNames.join(", ");
-        const history = sessions.getHistory(msg.userId, 6);
-        const formatHint = PLATFORM_FORMAT_HINTS[msg.platform] || PLATFORM_FORMAT_HINTS.slack;
-        const inlinePrompt = `${OVE_PERSONA}\n\nAvailable repos: ${repoList}\n\nThe user has access to ${repoNames.length} repos. Based on their message, determine which repo(s) they mean and answer their question fully. Use \`gh\` CLI to query GitHub (e.g. \`gh pr list --repo owner/repo\`, \`gh issue list --repo owner/repo\`). Do NOT stop after identifying the repo — complete the actual task.\n\n${formatHint}\n\n${parsed.rawText}`;
-
-        await msg.updateStatus("Working...");
-        try {
-          const runner = getRunner(config.runner?.name);
-          const result = await runner.run(inlinePrompt, config.reposDir, { maxTurns: 10 }, (event) => {
-            // Only show tool usage as status — don't relay response text (causes duplicates)
-            if (event.kind === "tool") msg.updateStatus(`Using ${event.tool}...`);
-          });
-          const parts = splitAndReply(result.output, msg.platform);
-          for (const part of parts) await msg.reply(part);
-          sessions.addMessage(msg.userId, "assistant", result.output.slice(0, 500));
-        } catch (err) {
-          await msg.reply(`Error: ${String(err).slice(0, 500)}`);
-        }
-        return;
-      }
-    } else {
-      const reply = "You don't have access to any repos yet. Set one up:\n`init repo <name> <git-url> [branch]`\nExample: `init repo my-app git@github.com:user/my-app.git`";
-      await msg.reply(reply);
-      return;
-    }
-  }
-
-  // Auth check
-  if (!isAuthorized(config, msg.userId, parsed.repo)) {
-    await msg.reply(`Not authorized for ${parsed.repo}.`);
-    return;
-  }
-
-  // Check repo exists — config overrides or registry
-  const repoInfo = getRepoInfo(parsed.repo);
-  if (!repoInfo) {
-    await msg.reply(`Unknown repo: ${parsed.repo}`);
-    return;
-  }
-
-  // Build prompt with conversation context
-  const history = sessions.getHistory(msg.userId, 6);
-  const prompt = buildContextualPrompt(parsed, history, OVE_PERSONA);
-
-  // Enqueue the task
-  const taskId = queue.enqueue({
-    userId: msg.userId,
-    repo: parsed.repo,
-    prompt,
-  });
-
-  // Store reply callback for later
-  pendingReplies.set(taskId, msg);
-
-  // Only ack if there's a queue backlog for this repo
-  const stats = queue.stats();
-  if (stats.running > 0 || stats.pending > 1) {
-    await msg.reply(`Queued — ${stats.pending} task${stats.pending > 1 ? "s" : ""} ahead.`);
-  }
-  logger.info("task enqueued", { taskId, repo: parsed.repo, type: parsed.type });
-}
-
-// Pending event responses — stores taskId → adapter for responding
-const pendingEventReplies = new Map<string, { adapter: EventAdapter; event: IncomingEvent }>();
-
-async function handleEvent(event: IncomingEvent, adapter: EventAdapter) {
-  const parsed = parseMessage(event.text);
-
-  if (!parsed.repo) {
-    const userRepos = getUserRepos(config, event.userId);
-    if (userRepos.length === 1) {
-      parsed.repo = userRepos[0];
-    } else if ("repo" in event.source && event.source.repo) {
-      const shortName = event.source.repo.split("/").pop() || event.source.repo;
-      if (isAuthorized(config, event.userId, shortName)) {
-        parsed.repo = shortName;
-      }
-    }
-  }
-
-  if (!parsed.repo) {
-    await adapter.respondToEvent(event.eventId, "Couldn't determine which repo. Configure your user in config.json.");
-    return;
-  }
-
-  if (!isAuthorized(config, event.userId, parsed.repo)) {
-    await adapter.respondToEvent(event.eventId, `Not authorized for ${parsed.repo}.`);
-    return;
-  }
-
-  const repoInfo = getRepoInfo(parsed.repo);
-  if (!repoInfo) {
-    await adapter.respondToEvent(event.eventId, `Unknown repo: ${parsed.repo}.`);
-    return;
-  }
-
-  const prompt = buildContextualPrompt(parsed, [], OVE_PERSONA);
-  const taskId = queue.enqueue({
-    userId: event.userId,
-    repo: parsed.repo,
-    prompt,
-  });
-
-  pendingEventReplies.set(taskId, { adapter, event });
-  logger.info("event task enqueued", { taskId, eventId: event.eventId, repo: parsed.repo });
-}
-
-async function processTask(task: import("./queue").Task) {
-  const isCreateProject = task.taskType === "create-project";
-  const repoInfo = isCreateProject ? null : getRepoInfo(task.repo);
-
-  if (!isCreateProject && !repoInfo) {
-    queue.fail(task.id, `Unknown repo: ${task.repo}`);
-    return;
-  }
-
-  const abortController = new AbortController();
-  runningProcesses.set(task.id, { abort: abortController, task });
-
-  const originalMsg = pendingReplies.get(task.id);
-  const statusLog: string[] = [];
-
-  try {
-    // Status update
-    await originalMsg?.updateStatus(`Working on it...`);
-
-    let workDir: string;
-
-    if (isCreateProject) {
-      // Create project directory under reposDir
-      workDir = join(config.reposDir, task.repo);
-      await Bun.write(join(workDir, ".gitkeep"), "");
-    } else {
-      // Ensure repo is cloned and up to date
-      await repos.cloneIfNeeded(task.repo, repoInfo!.url);
-      await repos.pull(task.repo, repoInfo!.defaultBranch);
-
-      // Create worktree
-      workDir = await repos.createWorktree(
-        task.repo,
-        task.id,
-        repoInfo!.defaultBranch
-      );
-    }
-
-    try {
-      // Write MCP config to temp file if configured
-      let mcpConfigPath: string | undefined;
-      if (config.mcpServers && Object.keys(config.mcpServers).length > 0) {
-        mcpConfigPath = join(tmpdir(), `mcp-${task.id}.json`);
-        await Bun.write(mcpConfigPath, JSON.stringify({ mcpServers: config.mcpServers }));
-      }
-
-      const taskRunner = getRunnerForRepo(task.repo);
-      const runOpts = getRunnerOptsForRepo(task.repo, {
-        maxTurns: config.claude.maxTurns,
-        mcpConfigPath,
-        signal: abortController.signal,
-      });
-
-      const result = await taskRunner.run(
-        task.prompt,
-        workDir,
-        runOpts,
-        (event: StatusEvent) => {
-          // Only surface meaningful status — skip noisy tool-by-tool updates
-          if (event.kind === "tool") {
-            // Summarize tool usage without raw details
-            const last = statusLog[statusLog.length - 1];
-            const summary = `Using ${event.tool}...`;
-            if (last !== summary) statusLog.push(summary);
-          } else {
-            statusLog.push(event.text.slice(0, 200));
-          }
-          // Show only last 5 lines to reduce noise
-          originalMsg?.updateStatus(statusLog.slice(-5).join("\n"));
-        }
-      );
-
-      // Clean up MCP temp file
-      if (mcpConfigPath) {
-        try {
-          await unlink(mcpConfigPath);
-        } catch {}
-      }
-
-      if (result.success) {
-        queue.complete(task.id, result.output);
-        logger.info("task completed", { taskId: task.id, durationMs: result.durationMs });
-
-        // Reply to user — split long results across messages
-        const platform = originalMsg?.platform || "slack";
-        const parts = splitAndReply(result.output, platform);
-        for (const part of parts) {
-          await originalMsg?.reply(part);
-        }
-        sessions.addMessage(task.userId, "assistant", result.output.slice(0, 500));
-
-        // Check if this was triggered by an event adapter
-        const eventReply = pendingEventReplies.get(task.id);
-        if (eventReply) {
-          await eventReply.adapter.respondToEvent(eventReply.event.eventId, result.output);
-          pendingEventReplies.delete(task.id);
-        }
-      } else {
-        queue.fail(task.id, result.output);
-        logger.error("task failed", { taskId: task.id });
-        await originalMsg?.reply(`Task failed: ${result.output.slice(0, 500)}`);
-        sessions.addMessage(task.userId, "assistant", `Task failed: ${result.output.slice(0, 200)}`);
-
-        // Notify event adapter of failure too
-        const eventReply = pendingEventReplies.get(task.id);
-        if (eventReply) {
-          await eventReply.adapter.respondToEvent(eventReply.event.eventId, `Task failed: ${result.output.slice(0, 500)}`);
-          pendingEventReplies.delete(task.id);
-        }
-      }
-    } finally {
-      // Only clean up worktree for non-create-project tasks
-      if (!isCreateProject) {
-        await repos.removeWorktree(task.repo, task.id).catch(() => {});
-      }
-    }
-  } catch (err) {
-    queue.fail(task.id, String(err));
-    logger.error("task processing error", { taskId: task.id, error: String(err) });
-    await originalMsg?.reply(`Task error: ${String(err).slice(0, 500)}`);
-  } finally {
-    runningProcesses.delete(task.id);
-    pendingReplies.delete(task.id);
-  }
-}
-
-// Worker loop — runs up to maxConcurrent tasks in parallel, per-repo serialization via dequeue()
-async function workerLoop() {
-  const maxConcurrent = 5;
-
-  while (true) {
-    if (runningProcesses.size < maxConcurrent) {
-      try {
-        const task = queue.dequeue();
-        if (task) {
-          processTask(task).catch((err) =>
-            logger.error("worker task error", { taskId: task.id, error: String(err) })
-          );
-          continue; // try to grab another immediately
-        }
-      } catch (err) {
-        logger.error("worker loop error", { error: String(err) });
-      }
-    }
-    await Bun.sleep(2000);
-  }
-}
-
 // Main
 async function main() {
-  // Reset tasks stuck as "running" from a previous interrupted session
   const staleCount = queue.resetStale();
   if (staleCount > 0) {
     logger.info("reset stale tasks", { count: staleCount });
@@ -791,21 +159,46 @@ async function main() {
 
   logger.info("ove starting", { chatAdapters: adapters.length, eventAdapters: eventAdapters.length, runner: config.runner?.name || "claude" });
 
-  // Start GitHub repo sync (non-blocking)
   startGitHubSync().catch((err) =>
     logger.warn("initial github sync failed", { error: String(err) })
   );
+
+  const handleMessage = createMessageHandler({
+    config,
+    queue,
+    sessions,
+    schedules,
+    repoRegistry,
+    pendingReplies,
+    pendingEventReplies,
+    runningProcesses,
+    getRunner,
+    getRunnerForRepo,
+    getRepoInfo,
+  });
+
+  const handleEvent = createEventHandler({
+    config,
+    queue,
+    sessions,
+    schedules,
+    repoRegistry,
+    pendingReplies,
+    pendingEventReplies,
+    runningProcesses,
+    getRunner,
+    getRunnerForRepo,
+    getRepoInfo,
+  });
 
   for (const adapter of adapters) {
     await adapter.start(handleMessage);
   }
 
-  // Start event adapters
   for (const ea of eventAdapters) {
     await ea.start((event) => handleEvent(event, ea));
   }
 
-  // Start cron loop — checks both config-based and user-created schedules
   const configCron = config.cron || [];
   startCronLoop(
     () => [
@@ -827,12 +220,22 @@ async function main() {
   );
   logger.info("cron started", { configTasks: configCron.length });
 
-  // Start worker loop
-  workerLoop();
+  const worker = createWorker({
+    config,
+    queue,
+    repos,
+    sessions,
+    pendingReplies,
+    pendingEventReplies,
+    runningProcesses,
+    getRunnerForRepo,
+    getRunnerOptsForRepo,
+    getRepoInfo,
+  });
+  worker.start();
 
   logger.info("ove ready");
 
-  // Graceful shutdown
   async function shutdown() {
     logger.info("shutting down...");
     for (const adapter of adapters) {

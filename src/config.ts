@@ -64,6 +64,7 @@ export function loadConfig(): Config {
       github: raw.github,
     };
   } catch {
+    // Config file doesn't exist yet or is invalid — use defaults
     return {
       repos: {},
       users: {},
@@ -94,7 +95,9 @@ export function saveConfig(config: Config): void {
   let existing: Record<string, any> = {};
   try {
     existing = JSON.parse(readFileSync(configPath, "utf-8"));
-  } catch {}
+  } catch {
+    // File doesn't exist yet or is invalid — start with empty object
+  }
   const merged = { ...existing, repos: config.repos, users: config.users, claude: config.claude, reposDir: config.reposDir };
   if (config.mcpServers) merged.mcpServers = config.mcpServers;
   if (config.cron) merged.cron = config.cron;

@@ -1,5 +1,15 @@
 import { Database } from "bun:sqlite";
 
+interface ScheduleRow {
+  id: number;
+  user_id: string;
+  repo: string;
+  prompt: string;
+  schedule: string;
+  description: string | null;
+  created_at: string;
+}
+
 export interface Schedule {
   id: number;
   userId: string;
@@ -45,7 +55,7 @@ export class ScheduleStore {
   }
 
   listByUser(userId: string): Schedule[] {
-    return (this.db.query(`SELECT * FROM schedules WHERE user_id = ? ORDER BY id`).all(userId) as any[])
+    return (this.db.query(`SELECT * FROM schedules WHERE user_id = ? ORDER BY id`).all(userId) as ScheduleRow[])
       .map(this.rowToSchedule);
   }
 
@@ -55,11 +65,11 @@ export class ScheduleStore {
   }
 
   getAll(): Schedule[] {
-    return (this.db.query(`SELECT * FROM schedules ORDER BY id`).all() as any[])
+    return (this.db.query(`SELECT * FROM schedules ORDER BY id`).all() as ScheduleRow[])
       .map(this.rowToSchedule);
   }
 
-  private rowToSchedule(row: any): Schedule {
+  private rowToSchedule(row: ScheduleRow): Schedule {
     return {
       id: row.id,
       userId: row.user_id,

@@ -11,6 +11,16 @@ export interface RepoRecord {
   lastSyncedAt: string | null;
 }
 
+interface RepoRow {
+  name: string;
+  url: string;
+  owner: string | null;
+  default_branch: string;
+  source: string;
+  excluded: number;
+  last_synced_at: string | null;
+}
+
 export interface RepoUpsertInput {
   name: string;
   url: string;
@@ -62,17 +72,17 @@ export class RepoRegistry {
   }
 
   getByName(name: string): RepoRecord | null {
-    const row = this.db.query(`SELECT * FROM repos WHERE name = ?`).get(name) as any;
+    const row = this.db.query(`SELECT * FROM repos WHERE name = ?`).get(name) as RepoRow;
     return row ? this.rowToRecord(row) : null;
   }
 
   getAll(): RepoRecord[] {
-    const rows = this.db.query(`SELECT * FROM repos WHERE excluded = 0 ORDER BY name`).all() as any[];
+    const rows = this.db.query(`SELECT * FROM repos WHERE excluded = 0 ORDER BY name`).all() as RepoRow[];
     return rows.map(r => this.rowToRecord(r));
   }
 
   getAllNames(): string[] {
-    const rows = this.db.query(`SELECT name FROM repos WHERE excluded = 0 ORDER BY name`).all() as any[];
+    const rows = this.db.query(`SELECT name FROM repos WHERE excluded = 0 ORDER BY name`).all() as { name: string }[];
     return rows.map(r => r.name);
   }
 
@@ -94,7 +104,7 @@ export class RepoRegistry {
     }
   }
 
-  private rowToRecord(row: any): RepoRecord {
+  private rowToRecord(row: RepoRow): RepoRecord {
     return {
       name: row.name,
       url: row.url,
@@ -124,6 +134,13 @@ export function parseGhRepoLine(line: string): GhRepoParsed | null {
   return { name, owner, fullName };
 }
 
+interface GhRepoResponse {
+  name: string;
+  owner?: { login: string };
+  defaultBranchRef?: { name: string };
+  isArchived: boolean;
+}
+
 export async function syncGitHub(
   registry: RepoRegistry,
   orgs?: string[]
@@ -150,10 +167,11 @@ export async function syncGitHub(
         continue;
       }
 
-      let repos: any[];
+      let repos: GhRepoResponse[];
       try {
         repos = JSON.parse(output);
       } catch {
+        // JSON parsing failed — log and skip this org
         logger.warn("gh repo list returned invalid JSON", { org });
         continue;
       }

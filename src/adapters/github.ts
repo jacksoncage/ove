@@ -115,6 +115,18 @@ export class GitHubAdapter implements EventAdapter {
       logger.info("github mention detected", { repo, user: comment.user.login, number });
       this.onEvent?.(event);
     }
+
+    this.pruneSeenIds();
+  }
+
+  private pruneSeenIds() {
+    if (this.seenCommentIds.size > 1000) {
+      const iter = this.seenCommentIds.values();
+      while (this.seenCommentIds.size > 800) {
+        const val = iter.next().value;
+        if (val !== undefined) this.seenCommentIds.delete(val);
+      }
+    }
   }
 
   private async fetchRecentComments(repo: string): Promise<GitHubComment[]> {

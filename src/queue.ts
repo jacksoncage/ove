@@ -19,6 +19,18 @@ export interface Task {
   completedAt: string | null;
 }
 
+interface TaskRow {
+  id: string;
+  user_id: string;
+  repo: string;
+  prompt: string;
+  status: string;
+  result: string | null;
+  task_type: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
 export class TaskQueue {
   private db: Database;
 
@@ -38,10 +50,9 @@ export class TaskQueue {
       )
     `);
     // Migration: add task_type column if missing (backward compat)
-    try {
-      this.db.run(`ALTER TABLE tasks ADD COLUMN task_type TEXT`);
-    } catch {
-      // Column already exists
+    const columns = this.db.query("PRAGMA table_info(tasks)").all() as { name: string }[];
+    if (!columns.some(c => c.name === "task_type")) {
+      this.db.run("ALTER TABLE tasks ADD COLUMN task_type TEXT");
     }
   }
 
@@ -64,7 +75,7 @@ export class TaskQueue {
          ORDER BY created_at ASC
          LIMIT 1`
       )
-      .get() as any;
+      .get() as TaskRow;
 
     if (!row) return null;
 
@@ -88,7 +99,7 @@ export class TaskQueue {
   }
 
   get(id: string): Task | null {
-    const row = this.db.query(`SELECT * FROM tasks WHERE id = ?`).get(id) as any;
+    const row = this.db.query(`SELECT * FROM tasks WHERE id = ?`).get(id) as TaskRow;
     return row ? this.rowToTask(row) : null;
   }
 
@@ -97,7 +108,7 @@ export class TaskQueue {
       .query(
         `SELECT * FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`
       )
-      .all(userId, limit) as any[];
+      .all(userId, limit) as TaskRow[];
     return rows.map((r) => this.rowToTask(r));
   }
 
@@ -111,7 +122,7 @@ export class TaskQueue {
           COUNT(*) FILTER (WHERE status = 'failed') as failed
         FROM tasks`
       )
-      .get() as any;
+      .get() as { pending: number; running: number; completed: number; failed: number };
     return row;
   }
 
@@ -120,7 +131,7 @@ export class TaskQueue {
       .query(
         `SELECT * FROM tasks WHERE status IN ('running', 'pending') ORDER BY created_at ASC LIMIT ?`
       )
-      .all(limit) as any[];
+      .all(limit) as TaskRow[];
     return rows.map((r) => this.rowToTask(r));
   }
 
@@ -140,13 +151,13 @@ export class TaskQueue {
     return result.changes;
   }
 
-  private rowToTask(row: any): Task {
+  private rowToTask(row: TaskRow): Task {
     return {
       id: row.id,
       userId: row.user_id,
       repo: row.repo,
       prompt: row.prompt,
-      status: row.status,
+      status: row.status as "pending" | "running" | "completed" | "failed",
       result: row.result,
       taskType: row.task_type || null,
       createdAt: row.created_at,

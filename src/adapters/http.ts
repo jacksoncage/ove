@@ -94,7 +94,8 @@ export class HttpApiAdapter implements EventAdapter {
               controller.enqueue(`data: ${data}\n\n`);
             },
             cancel() {
-              // Clean up on disconnect
+              const idx = pending.sseControllers.indexOf(controller);
+              if (idx >= 0) pending.sseControllers.splice(idx, 1);
             },
           });
 
@@ -146,9 +147,14 @@ export class HttpApiAdapter implements EventAdapter {
       try {
         controller.enqueue(`data: ${data}\n\n`);
         controller.close();
-      } catch {}
+      } catch (err) {
+        logger.debug("sse enqueue failed", { eventId, error: String(err) });
+      }
     }
     pending.sseControllers = [];
+
+    // Clean up event after 5 minutes
+    setTimeout(() => this.events.delete(eventId), 5 * 60 * 1000);
   }
 
   /** Called by index.ts to push status updates to SSE clients */
@@ -161,7 +167,9 @@ export class HttpApiAdapter implements EventAdapter {
     for (const controller of pending.sseControllers) {
       try {
         controller.enqueue(`data: ${data}\n\n`);
-      } catch {}
+      } catch (err) {
+        logger.debug("sse status update failed", { eventId, error: String(err) });
+      }
     }
   }
 }
