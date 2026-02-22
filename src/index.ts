@@ -434,6 +434,11 @@ async function handleMessage(msg: IncomingMessage) {
     return;
   }
 
+  // If the repo hint doesn't match a known repo, clear it and let auto-resolution handle it
+  if (parsed.repo && !getRepoInfo(parsed.repo)) {
+    parsed.repo = undefined;
+  }
+
   // Need a repo for task commands
   if (!parsed.repo) {
     const userRepos = getUserRepos(config, msg.userId);
