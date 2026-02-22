@@ -213,7 +213,7 @@ async function handleMessage(msg: IncomingMessage) {
   // Handle clear/reset command
   if (parsed.type === "clear") {
     sessions.clear(msg.userId);
-    await msg.reply("Nåväl. Slate wiped clean. Try not to make a mess of it again.");
+    await msg.reply("Conversation cleared.");
     return;
   }
 
@@ -228,14 +228,14 @@ async function handleMessage(msg: IncomingMessage) {
       const min = Math.floor(elapsed / 60);
       const sec = elapsed % 60;
       const duration = min > 0 ? `${min}m ${sec}s` : `${sec}s`;
-      reply = `Still working on task ${running.id.slice(0, 8)} on ${running.repo} (${duration}). Hold your horses.`;
+      reply = `Working on ${running.repo} (${duration})...`;
     } else {
       const lastDone = userTasks.find((t) => t.status === "completed");
       if (lastDone) {
-        reply = `Nothing running right now. Last task (${lastDone.id.slice(0, 8)} on ${lastDone.repo}) completed. Ask me something if you want.`;
+        reply = `Nothing running. Last task on ${lastDone.repo} completed.`;
       } else {
         const stats = queue.stats();
-        reply = `${stats.pending} pending, ${stats.running} running, ${stats.completed} done, ${stats.failed} failed. I'm keeping track so you don't have to.`;
+        reply = `${stats.pending} pending, ${stats.running} running, ${stats.completed} done, ${stats.failed} failed.`;
       }
     }
     await msg.reply(reply);
@@ -246,14 +246,14 @@ async function handleMessage(msg: IncomingMessage) {
   if (parsed.type === "history") {
     const tasks = queue.listByUser(msg.userId, 5);
     if (tasks.length === 0) {
-      await msg.reply("Nothing. You haven't asked me to do anything yet. Typical.");
+      await msg.reply("No recent tasks.");
       sessions.addMessage(msg.userId, "assistant", "No recent tasks.");
       return;
     }
     const lines = tasks.map(
       (t) => `• [${t.status}] ${t.prompt.slice(0, 80)} (${t.repo})`
     );
-    const reply = `Here. Your recent tasks:\n${lines.join("\n")}`;
+    const reply = `Recent tasks:\n${lines.join("\n")}`;
     await msg.reply(reply);
     sessions.addMessage(msg.userId, "assistant", reply);
     return;
@@ -261,7 +261,7 @@ async function handleMessage(msg: IncomingMessage) {
 
   if (parsed.type === "help") {
     const reply = [
-      "Fine. Here's what I can do, since apparently you need to be told:",
+      "Available commands:",
       "• review PR #N on <repo> — I'll find every problem",
       "• fix issue #N on <repo> — I'll fix it properly",
       "• simplify <path> in <repo> — clean up your mess",
@@ -352,7 +352,7 @@ async function handleMessage(msg: IncomingMessage) {
       description: result.description,
     });
 
-    const reply = `Fine. Schedule #${id} created. I'll "${result.prompt}" on ${repo} ${result.description}. You can see all schedules with "list schedules".`;
+    const reply = `Schedule #${id} created: "${result.prompt}" on ${repo} ${result.description}.`;
     await msg.reply(reply);
     sessions.addMessage(msg.userId, "assistant", reply);
     return;
@@ -403,7 +403,7 @@ async function handleMessage(msg: IncomingMessage) {
     });
 
     pendingReplies.set(taskId, msg);
-    await msg.reply(`Nåväl. Creating "${projectName}" (${taskId.slice(0, 8)}). I'll set it up properly.`);
+    await msg.reply(`Creating "${projectName}"...`);
     logger.info("task enqueued", { taskId, type: "create-project", name: projectName });
     return;
   }
@@ -428,7 +428,7 @@ async function handleMessage(msg: IncomingMessage) {
 
     addRepo(config, name, url, branch);
     addUser(config, msg.userId, msg.userId, [name]);
-    const reply = `Fine. Added repo "${name}" (${url}, branch: ${branch}). You're good to go — ask me to do something on ${name}.`;
+    const reply = `Added repo "${name}" (${url}, branch: ${branch}).`;
     await msg.reply(reply);
     sessions.addMessage(msg.userId, "assistant", reply);
     return;
@@ -458,7 +458,6 @@ async function handleMessage(msg: IncomingMessage) {
         const formatHint = PLATFORM_FORMAT_HINTS[msg.platform] || PLATFORM_FORMAT_HINTS.slack;
         const inlinePrompt = `${OVE_PERSONA}\n\nAvailable repos: ${repoList}\n\nThe user has access to ${repoNames.length} repos. Based on their message, determine which repo(s) they mean and answer their question fully. Use \`gh\` CLI to query GitHub (e.g. \`gh pr list --repo owner/repo\`, \`gh issue list --repo owner/repo\`). Do NOT stop after identifying the repo — complete the actual task.\n\n${formatHint}\n\n${parsed.rawText}`;
 
-        await msg.reply("Mja. Let me look into that...");
         await msg.updateStatus("Working...");
         try {
           const runner = getRunner(config.runner?.name);
@@ -507,7 +506,11 @@ async function handleMessage(msg: IncomingMessage) {
   // Store reply callback for later
   pendingReplies.set(taskId, msg);
 
-  await msg.reply(`Mja. Fine. Queued (${taskId.slice(0, 8)}). I'll get to it.`);
+  // Only ack if there's a queue backlog for this repo
+  const stats = queue.stats();
+  if (stats.running > 0 || stats.pending > 1) {
+    await msg.reply(`Queued — ${stats.pending} task${stats.pending > 1 ? "s" : ""} ahead.`);
+  }
   logger.info("task enqueued", { taskId, repo: parsed.repo, type: parsed.type });
 }
 
@@ -570,7 +573,7 @@ async function processTask(task: import("./queue").Task) {
 
   try {
     // Status update
-    await originalMsg?.updateStatus(`Working on task ${task.id.slice(0, 8)}...`);
+    await originalMsg?.updateStatus(`Working on it...`);
 
     let workDir: string;
 
@@ -610,12 +613,17 @@ async function processTask(task: import("./queue").Task) {
         workDir,
         runOpts,
         (event: StatusEvent) => {
+          // Only surface meaningful status — skip noisy tool-by-tool updates
           if (event.kind === "tool") {
-            statusLog.push(`${event.tool}: ${event.input}`);
+            // Summarize tool usage without raw details
+            const last = statusLog[statusLog.length - 1];
+            const summary = `Using ${event.tool}...`;
+            if (last !== summary) statusLog.push(summary);
           } else {
             statusLog.push(event.text.slice(0, 200));
           }
-          originalMsg?.updateStatus(formatStatusLog(statusLog));
+          // Show only last 5 lines to reduce noise
+          originalMsg?.updateStatus(statusLog.slice(-5).join("\n"));
         }
       );
 
