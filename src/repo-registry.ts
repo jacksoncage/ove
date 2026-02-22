@@ -133,7 +133,7 @@ export async function syncGitHub(
 
   for (const org of targets) {
     try {
-      const args = ["repo", "list", "--limit", "500", "--no-archived"];
+      const args = ["repo", "list", "--json", "name,owner,defaultBranchRef,isArchived", "--limit", "500"];
       if (org) args.splice(2, 0, org);
 
       const proc = Bun.spawn(["gh", ...args], {
@@ -150,14 +150,25 @@ export async function syncGitHub(
         continue;
       }
 
-      for (const line of output.split("\n")) {
-        const parsed = parseGhRepoLine(line);
-        if (!parsed) continue;
+      let repos: any[];
+      try {
+        repos = JSON.parse(output);
+      } catch {
+        logger.warn("gh repo list returned invalid JSON", { org });
+        continue;
+      }
+
+      for (const repo of repos) {
+        if (repo.isArchived) continue;
+        const owner = repo.owner?.login || org || "";
+        const name = repo.name;
+        const defaultBranch = repo.defaultBranchRef?.name || "main";
 
         registry.upsert({
-          name: parsed.name,
-          url: `git@github.com:${parsed.fullName}.git`,
-          owner: parsed.owner,
+          name,
+          url: `git@github.com:${owner}/${name}.git`,
+          owner,
+          defaultBranch,
           source: "github-sync",
         });
         count++;

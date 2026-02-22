@@ -161,6 +161,15 @@ if (process.env.CLI_MODE === "true" || (adapters.length === 0 && eventAdapters.l
   adapters.push(new CliAdapter(cliUserId));
 }
 
+// Platform-specific formatting hints for Claude output
+const PLATFORM_FORMAT_HINTS: Record<string, string> = {
+  telegram: "Format output for Telegram: use plain text, bold with *text*, no markdown tables. Use simple bulleted lists with • instead. Keep it concise.",
+  slack: "Format output for Slack: use *bold*, no markdown tables. Use simple bulleted lists with • instead. Keep it concise.",
+  discord: "Format output for Discord: use **bold**, no wide tables. Use simple bulleted lists. Keep under 2000 chars.",
+  whatsapp: "Format output for WhatsApp: use *bold*, no markdown tables or code blocks. Use simple bulleted lists with • instead.",
+  cli: "Format output using markdown. Tables are fine.",
+};
+
 // Platform-specific message size limits
 const MESSAGE_LIMITS: Record<string, number> = {
   slack: 3900,
@@ -440,12 +449,27 @@ async function handleMessage(msg: IncomingMessage) {
         await msg.reply(reply);
         return;
       } else {
-        // Inject repo list for Claude to resolve
+        // Multiple repos — run inline (like discuss) with repo list context
+        // Claude answers from knowledge + gh CLI, no worktree needed
         const repoList = repoNames.join(", ");
-        parsed.args._availableRepos = repoNames;
-        parsed.rawText = `Available repos: ${repoList}\n\nThe user hasn't specified which repo. Based on their message, determine the correct repo and proceed. If unclear, ask them which repo they mean.\n\n${parsed.rawText}`;
-        // Use first repo as fallback — Claude will pick the right one from the prompt
-        parsed.repo = repoNames[0];
+        const history = sessions.getHistory(msg.userId, 6);
+        const formatHint = PLATFORM_FORMAT_HINTS[msg.platform] || PLATFORM_FORMAT_HINTS.slack;
+        const inlinePrompt = `${OVE_PERSONA}\n\nAvailable repos: ${repoList}\n\nThe user has access to ${repoNames.length} repos. Based on their message, determine which repo(s) they mean and answer their question fully. Use \`gh\` CLI to query GitHub (e.g. \`gh pr list --repo owner/repo\`, \`gh issue list --repo owner/repo\`). Do NOT stop after identifying the repo — complete the actual task.\n\n${formatHint}\n\n${parsed.rawText}`;
+
+        await msg.reply("Mja. Let me look into that...");
+        await msg.updateStatus("Working...");
+        try {
+          const runner = getRunner(config.runner?.name);
+          const result = await runner.run(inlinePrompt, config.reposDir, { maxTurns: 10 }, (event) => {
+            if (event.kind === "text") msg.updateStatus(event.text.slice(0, 200));
+          });
+          const parts = splitAndReply(result.output, msg.platform);
+          for (const part of parts) await msg.reply(part);
+          sessions.addMessage(msg.userId, "assistant", result.output.slice(0, 500));
+        } catch (err) {
+          await msg.reply(`Error: ${String(err).slice(0, 500)}`);
+        }
+        return;
       }
     } else {
       const reply = "You don't have access to any repos yet. Set one up:\n`init repo <name> <git-url> [branch]`\nExample: `init repo my-app git@github.com:user/my-app.git`";
