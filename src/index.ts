@@ -302,7 +302,8 @@ async function handleMessage(msg: IncomingMessage) {
   // Create schedule
   if (parsed.type === "schedule") {
     await msg.updateStatus("Parsing your schedule...");
-    const userRepos = getUserRepos(config, msg.userId);
+    const rawRepos = getUserRepos(config, msg.userId);
+    const userRepos = rawRepos.includes("*") ? repoRegistry.getAllNames() : rawRepos;
 
     if (userRepos.length === 0) {
       await msg.reply("You don't have access to any repos. Set one up first with `init repo <name> <git-url>`.");
