@@ -3,6 +3,13 @@
     "my-app": {
       "url": "git@github.com:user/my-app.git",
       "defaultBranch": "main"
+    },
+    "infra": {
+      "runner": { "name": "codex" },
+      "defaultBranch": "develop"
+    },
+    "old-legacy": {
+      "excluded": true
     }
   },
   "users": {
@@ -10,9 +17,9 @@
       "name": "love",
       "repos": ["my-app"]
     },
-    "whatsapp:46701234567": {
+    "telegram:123456789": {
       "name": "love",
-      "repos": ["my-app"]
+      "repos": ["*"]
     }
   },
   "claude": {
@@ -20,6 +27,10 @@
   },
   "runner": {
     "name": "claude"
+  },
+  "github": {
+    "syncInterval": 1800000,
+    "orgs": ["my-org"]
   },
   "mcpServers": {
     "filesystem": {

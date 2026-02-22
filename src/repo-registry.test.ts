@@ -104,3 +104,27 @@ describe("parseGhRepoLine", () => {
     expect(parseGhRepoLine("no-slash-here")).toBeNull();
   });
 });
+
+describe("config + registry integration", () => {
+  it("config repos + registry merge correctly", () => {
+    const db = new Database(":memory:");
+    const registry = new RepoRegistry(db);
+
+    // Simulate GitHub sync adding repos
+    registry.upsert({ name: "api", url: "git@github.com:org/api.git", owner: "org", source: "github-sync" });
+    registry.upsert({ name: "web", url: "git@github.com:org/web.git", owner: "org", source: "github-sync" });
+
+    // Simulate config migration (manual repo)
+    registry.migrateFromConfig({
+      "legacy": { url: "git@github.com:me/legacy.git", defaultBranch: "develop" },
+    });
+
+    // All three repos exist
+    expect(registry.getAllNames().sort()).toEqual(["api", "legacy", "web"]);
+
+    // Excluding a repo hides it from getAll but not getByName
+    registry.setExcluded("legacy", true);
+    expect(registry.getAllNames().sort()).toEqual(["api", "web"]);
+    expect(registry.getByName("legacy")).not.toBeNull();
+  });
+});
