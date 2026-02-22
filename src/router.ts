@@ -105,7 +105,7 @@ export function parseMessage(text: string): ParsedMessage {
     };
   }
 
-  const repoHint = trimmed.match(/(?:in|on)\s+(\S+)\s*$/i);
+  const repoHint = trimmed.match(/(?:in|on)\s+(\S+?)[?.!,]*\s*$/i);
   return { type: "free-form", repo: repoHint?.[1], args: {}, rawText: trimmed };
 }
 

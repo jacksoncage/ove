@@ -165,7 +165,7 @@ if (process.env.CLI_MODE === "true" || (adapters.length === 0 && eventAdapters.l
 
 // Platform-specific formatting hints for Claude output
 const PLATFORM_FORMAT_HINTS: Record<string, string> = {
-  telegram: "Format output for Telegram: use plain text, bold with *text*, no markdown tables. Use simple bulleted lists with • instead. Keep it concise.",
+  telegram: "Format output for Telegram: use *bold* for emphasis, `code` for inline code, ```code blocks```. No markdown tables. Use simple bulleted lists with • instead. Keep it concise.",
   slack: "Format output for Slack: use *bold*, no markdown tables. Use simple bulleted lists with • instead. Keep it concise.",
   discord: "Format output for Discord: use **bold**, no wide tables. Use simple bulleted lists. Keep under 2000 chars.",
   whatsapp: "Format output for WhatsApp: use *bold*, no markdown tables or code blocks. Use simple bulleted lists with • instead.",
@@ -462,7 +462,8 @@ async function handleMessage(msg: IncomingMessage) {
         try {
           const runner = getRunner(config.runner?.name);
           const result = await runner.run(inlinePrompt, config.reposDir, { maxTurns: 10 }, (event) => {
-            if (event.kind === "text") msg.updateStatus(event.text.slice(0, 200));
+            // Only show tool usage as status — don't relay response text (causes duplicates)
+            if (event.kind === "tool") msg.updateStatus(`Using ${event.tool}...`);
           });
           const parts = splitAndReply(result.output, msg.platform);
           for (const part of parts) await msg.reply(part);
@@ -481,14 +482,14 @@ async function handleMessage(msg: IncomingMessage) {
 
   // Auth check
   if (!isAuthorized(config, msg.userId, parsed.repo)) {
-    await msg.reply(`You're not authorized for ${parsed.repo}. I don't make the rules.`);
+    await msg.reply(`Not authorized for ${parsed.repo}.`);
     return;
   }
 
   // Check repo exists — config overrides or registry
   const repoInfo = getRepoInfo(parsed.repo);
   if (!repoInfo) {
-    await msg.reply(`Never heard of ${parsed.repo}. Check the config or run GitHub sync.`);
+    await msg.reply(`Unknown repo: ${parsed.repo}`);
     return;
   }
 

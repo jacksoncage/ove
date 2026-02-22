@@ -13,6 +13,24 @@ function debounce<T extends (...args: any[]) => any>(fn: T, ms: number): T {
   }) as any as T;
 }
 
+/** Convert simple markdown (*bold*, `code`, ```blocks```) to Telegram HTML */
+function mdToHtml(text: string): string {
+  // Escape HTML entities first
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  return html
+    // Code blocks first (```lang\n...\n```)
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre>$2</pre>')
+    // Inline code
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // Bold **text** or *text*
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/\*(.+?)\*/g, '<b>$1</b>');
+}
+
 export class TelegramAdapter implements ChatAdapter {
   private bot: Bot;
   private onMessage?: (msg: IncomingMessage) => void;
@@ -34,13 +52,13 @@ export class TelegramAdapter implements ChatAdapter {
       const doUpdate = debounce(async (statusText: string) => {
         try {
           if (statusMsgId) {
-            await ctx.api.editMessageText(chatId, statusMsgId, statusText);
+            await ctx.api.editMessageText(chatId, statusMsgId, mdToHtml(statusText), { parse_mode: "HTML" });
           } else {
-            const sent = await ctx.reply(statusText);
+            const sent = await ctx.reply(mdToHtml(statusText), { parse_mode: "HTML" });
             statusMsgId = sent.message_id;
           }
         } catch {
-          const sent = await ctx.reply(statusText);
+          const sent = await ctx.reply(mdToHtml(statusText), { parse_mode: "HTML" });
           statusMsgId = sent.message_id;
         }
       }, 3000);
@@ -50,7 +68,18 @@ export class TelegramAdapter implements ChatAdapter {
         platform: "telegram",
         text,
         reply: async (replyText: string) => {
-          await ctx.reply(replyText);
+          // Replace the status message with the first reply, then send new messages for the rest
+          if (statusMsgId) {
+            try {
+              await ctx.api.editMessageText(chatId, statusMsgId, mdToHtml(replyText), { parse_mode: "HTML" });
+              statusMsgId = undefined;
+              return;
+            } catch {
+              // Edit failed (message too old, etc.) — fall through to send new
+            }
+            statusMsgId = undefined;
+          }
+          await ctx.reply(mdToHtml(replyText), { parse_mode: "HTML" });
         },
         updateStatus: doUpdate,
       };
@@ -70,6 +99,6 @@ export class TelegramAdapter implements ChatAdapter {
 
   async sendToUser(userId: string, text: string): Promise<void> {
     const chatId = userId.replace("telegram:", "");
-    await this.bot.api.sendMessage(Number(chatId), text);
+    await this.bot.api.sendMessage(Number(chatId), mdToHtml(text), { parse_mode: "HTML" });
   }
 }
