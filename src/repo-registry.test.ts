@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
-import { RepoRegistry } from "./repo-registry";
+import { RepoRegistry, parseGhRepoLine } from "./repo-registry";
 
 describe("RepoRegistry", () => {
   let db: Database;
@@ -82,5 +82,25 @@ describe("RepoRegistry", () => {
       "my-app": { url: "config-url", defaultBranch: "main" },
     });
     expect(registry.getByName("my-app")!.url).toBe("gh-url");
+  });
+});
+
+describe("parseGhRepoLine", () => {
+  it("parses standard gh repo list output", () => {
+    const result = parseGhRepoLine("jacksoncage/ove\tMy app\tpublic\t2026-02-20T10:00:00Z");
+    expect(result).toEqual({ name: "ove", owner: "jacksoncage", fullName: "jacksoncage/ove" });
+  });
+
+  it("parses line with no description", () => {
+    const result = parseGhRepoLine("org/repo-name\t\tprivate\t2026-01-01T00:00:00Z");
+    expect(result).toEqual({ name: "repo-name", owner: "org", fullName: "org/repo-name" });
+  });
+
+  it("returns null for empty line", () => {
+    expect(parseGhRepoLine("")).toBeNull();
+  });
+
+  it("returns null for line without slash", () => {
+    expect(parseGhRepoLine("no-slash-here")).toBeNull();
   });
 });

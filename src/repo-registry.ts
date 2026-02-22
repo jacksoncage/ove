@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { logger } from "./logger";
 
 export interface RepoRecord {
   name: string;
@@ -104,4 +105,68 @@ export class RepoRegistry {
       lastSyncedAt: row.last_synced_at,
     };
   }
+}
+
+export interface GhRepoParsed {
+  name: string;
+  owner: string;
+  fullName: string;
+}
+
+export function parseGhRepoLine(line: string): GhRepoParsed | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  // gh repo list output: owner/name\tdescription\tvisibility\tupdated_at
+  const fullName = trimmed.split("\t")[0];
+  if (!fullName || !fullName.includes("/")) return null;
+  const [owner, ...rest] = fullName.split("/");
+  const name = rest.join("/"); // handle potential edge cases
+  return { name, owner, fullName };
+}
+
+export async function syncGitHub(
+  registry: RepoRegistry,
+  orgs?: string[]
+): Promise<number> {
+  let count = 0;
+  const targets = orgs && orgs.length > 0 ? orgs : [undefined];
+
+  for (const org of targets) {
+    try {
+      const args = ["repo", "list", "--limit", "500", "--no-archived"];
+      if (org) args.splice(2, 0, org);
+
+      const proc = Bun.spawn(["gh", ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const output = await new Response(proc.stdout).text();
+      const exitCode = await proc.exited;
+
+      if (exitCode !== 0) {
+        const stderr = await new Response(proc.stderr).text();
+        logger.warn("gh repo list failed", { org, error: stderr.slice(0, 200) });
+        continue;
+      }
+
+      for (const line of output.split("\n")) {
+        const parsed = parseGhRepoLine(line);
+        if (!parsed) continue;
+
+        registry.upsert({
+          name: parsed.name,
+          url: `git@github.com:${parsed.fullName}.git`,
+          owner: parsed.owner,
+          source: "github-sync",
+        });
+        count++;
+      }
+    } catch (err) {
+      logger.warn("github sync error", { org, error: String(err) });
+    }
+  }
+
+  logger.info("github sync complete", { repos: count });
+  return count;
 }
