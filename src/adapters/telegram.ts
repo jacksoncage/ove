@@ -48,18 +48,21 @@ export class TelegramAdapter implements ChatAdapter {
       const userId = `telegram:${ctx.from.id}`;
       const text = ctx.message.text;
       let statusMsgId: number | undefined;
+      let lastStatusText: string | undefined;
 
       const doUpdate = debounce(async (statusText: string) => {
+        if (statusText === lastStatusText) return; // skip unchanged text
+        lastStatusText = statusText;
+        const html = mdToHtml(statusText);
         try {
           if (statusMsgId) {
-            await ctx.api.editMessageText(chatId, statusMsgId, mdToHtml(statusText), { parse_mode: "HTML" });
+            await ctx.api.editMessageText(chatId, statusMsgId, html, { parse_mode: "HTML" });
           } else {
-            const sent = await ctx.reply(mdToHtml(statusText), { parse_mode: "HTML" });
+            const sent = await ctx.reply(html, { parse_mode: "HTML" });
             statusMsgId = sent.message_id;
           }
         } catch {
-          const sent = await ctx.reply(mdToHtml(statusText), { parse_mode: "HTML" });
-          statusMsgId = sent.message_id;
+          // Edit may fail if content unchanged or message too old — ignore
         }
       }, 3000);
 
