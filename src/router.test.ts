@@ -124,6 +124,29 @@ describe("parseMessage", () => {
     expect(result.args.scheduleId).toBe(1);
   });
 
+  it("parses 'every 30 min' as schedule", () => {
+    const result = parseMessage("simplify code and create a PR every 30 min on infra-salming-ai");
+    expect(result.type).toBe("schedule");
+    expect(result.repo).toBe("infra-salming-ai");
+  });
+
+  it("parses 'every 2 hours' as schedule", () => {
+    const result = parseMessage("run tests every 2 hours on my-app");
+    expect(result.type).toBe("schedule");
+    expect(result.repo).toBe("my-app");
+  });
+
+  it("parses 'every hour' as schedule", () => {
+    const result = parseMessage("check for updates every hour");
+    expect(result.type).toBe("schedule");
+  });
+
+  it("parses 'every 15 minutes' as schedule", () => {
+    const result = parseMessage("deploy every 15 minutes on staging");
+    expect(result.type).toBe("schedule");
+    expect(result.repo).toBe("staging");
+  });
+
   it("parses init repo with SSH URL", () => {
     const result = parseMessage("init repo my-app git@github.com:user/my-app.git");
     expect(result.type).toBe("init-repo");
@@ -172,6 +195,63 @@ describe("parseMessage", () => {
   it("parses Telegram /clear as clear", () => {
     const result = parseMessage("/clear");
     expect(result.type).toBe("clear");
+  });
+
+  // Natural language status inquiries
+  it("parses 'how's it going?' as status", () => {
+    const result = parseMessage("how's it going?");
+    expect(result.type).toBe("status");
+  });
+
+  it("parses 'any updates?' as status", () => {
+    const result = parseMessage("any updates?");
+    expect(result.type).toBe("status");
+  });
+
+  it("parses 'are you done?' as status", () => {
+    const result = parseMessage("are you done?");
+    expect(result.type).toBe("status");
+  });
+
+  it("parses 'how dose it the work go?' as status", () => {
+    const result = parseMessage("how dose it the work go?");
+    expect(result.type).toBe("status");
+  });
+
+  it("parses 'how is the work going' as status", () => {
+    const result = parseMessage("how is the work going");
+    expect(result.type).toBe("status");
+  });
+
+  it("parses 'what's the progress' as status", () => {
+    const result = parseMessage("what's the progress");
+    expect(result.type).toBe("status");
+  });
+
+  it("parses 'done yet?' as status", () => {
+    const result = parseMessage("done yet?");
+    expect(result.type).toBe("status");
+  });
+
+  it("parses 'how far along are you' as status", () => {
+    const result = parseMessage("how far along are you");
+    expect(result.type).toBe("status");
+  });
+
+  it("parses 'is it done' as status", () => {
+    const result = parseMessage("is it done");
+    expect(result.type).toBe("status");
+  });
+
+  it("parses 'progress?' as status", () => {
+    const result = parseMessage("progress?");
+    expect(result.type).toBe("status");
+  });
+
+  it("does NOT parse work requests as status", () => {
+    expect(parseMessage("update the progress bar on my-app").type).toBe("free-form");
+    expect(parseMessage("fix the status page in my-app").type).toBe("free-form");
+    expect(parseMessage("add a progress indicator on my-app").type).toBe("free-form");
   });
 
   it("falls back to free-form for unrecognized input", () => {

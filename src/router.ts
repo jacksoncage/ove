@@ -38,6 +38,9 @@ export function parseMessage(text: string): ParsedMessage {
   if (lower === "help") return { type: "help", args: {}, rawText: trimmed };
   if (lower === "clear" || lower === "reset") return { type: "clear", args: {}, rawText: trimmed };
 
+  // Natural language status inquiries — short messages asking about progress
+  if (isStatusInquiry(lower)) return { type: "status", args: {}, rawText: trimmed };
+
   const prMatch = trimmed.match(/review\s+pr\s+#?(\d+)\s+(?:on|in)\s+(\S+)/i);
   if (prMatch) {
     return { type: "review-pr", repo: prMatch[2], args: { prNumber: parseInt(prMatch[1]) }, rawText: trimmed };
@@ -77,7 +80,7 @@ export function parseMessage(text: string): ParsedMessage {
   }
 
   // Schedule creation — detect natural language scheduling intent
-  if (/\b(?:every\s+(?:day|week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekday|morning|evening)|each\s+(?:day|week|weekday)|daily|weekly|monthly)\b/i.test(lower) ||
+  if (/\b(?:every\s+(?:day|week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekday|morning|evening|hour|(?:\d+\s+)?(?:min(?:ute)?s?|hours?))|each\s+(?:day|week|weekday)|daily|weekly|monthly)\b/i.test(lower) ||
       /\b(?:at\s+\d{1,2}(?::\d{2})?)\b.*\b(?:every|each|daily|weekly)\b/i.test(lower)) {
     const repoHint = trimmed.match(/(?:in|on)\s+(\S+)\s*$/i);
     return { type: "schedule", repo: repoHint?.[1], args: {}, rawText: trimmed };
@@ -104,6 +107,28 @@ export function parseMessage(text: string): ParsedMessage {
 
   const repoHint = trimmed.match(/(?:in|on)\s+(\S+)\s*$/i);
   return { type: "free-form", repo: repoHint?.[1], args: {}, rawText: trimmed };
+}
+
+// Detect natural language status/progress inquiries.
+// Only matches short, question-like messages — not work requests that happen
+// to contain words like "progress" or "status" (e.g. "fix the status page").
+const STATUS_PATTERNS = [
+  /^(?:how.s it going|how.?s .* going)/,       // how's it going, how is the work going
+  /^(?:any )?update[s]?\??$/,                   // updates?, any updates?
+  /^(?:are you |you |is it )done/,              // are you done?, is it done
+  /^done\s*(?:yet)?\??$/,                       // done?, done yet?
+  /^(?:what.s the |what is the )?progress\??$/,  // progress?, what's the progress
+  /^how (?:far|much)/,                          // how far along, how much left
+  /^(?:how.s|what.s|how is) (?:the )?(?:progress|status|work)/,  // how's the progress/status/work
+  /^(?:is it |are you )(?:still )?(?:working|running|busy)/,     // is it still running
+  /^(?:how do(?:se|es)? (?:it )?(?:the )?work go|how (?:do(?:se|es)? )?(?:the )?work go)/, // how does the work go (typo-tolerant)
+  /^(?:eta|when (?:will|are) (?:you|it) (?:be )?done)/,          // eta, when will you be done
+];
+
+function isStatusInquiry(lower: string): boolean {
+  // Only consider short messages (< 60 chars) to avoid matching work requests
+  if (lower.length > 60) return false;
+  return STATUS_PATTERNS.some((p) => p.test(lower));
 }
 
 export function buildContextualPrompt(
