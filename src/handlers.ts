@@ -415,29 +415,29 @@ async function handleTaskMessage(msg: IncomingMessage, parsed: ParsedMessage, de
         await msg.reply(reply);
         return;
       } else {
+        // Resolve repo via a quick LLM call, then enqueue through the normal path
         const repoList = repoNames.join(", ");
-        const history = deps.sessions.getHistory(msg.userId, 6);
-        const formatHint = PLATFORM_FORMAT_HINTS[msg.platform] || PLATFORM_FORMAT_HINTS.slack;
-        const historyBlock = history.length > 1
-          ? "Previous conversation:\n" +
-            history.slice(0, -1).map((m) => `${m.role}: ${m.content}`).join("\n") +
-            "\n\nCurrent request:\n"
-          : "";
-        const inlinePrompt = `${OVE_PERSONA}\n\nAvailable repos: ${repoList}\n\nThe user has access to ${repoNames.length} repos. Based on their message, determine which repo(s) they mean and answer their question fully. Use \`gh\` CLI to query GitHub (e.g. \`gh pr list --repo owner/repo\`, \`gh issue list --repo owner/repo\`). Do NOT stop after identifying the repo — complete the actual task.\n\n${formatHint}\n\n${historyBlock}${parsed.rawText}`;
+        const resolvePrompt = `You are a repo-name resolver. The user said:\n"${parsed.rawText}"\n\nAvailable repos: ${repoList}\n\nRespond with ONLY the repo name that best matches their request. Nothing else — just the exact repo name from the list. If you cannot determine which repo, respond with "UNKNOWN".`;
 
-        await msg.updateStatus("Working...");
+        await msg.updateStatus("Figuring out which repo...");
         try {
           const runner = deps.getRunner(deps.config.runner?.name);
-          const result = await runner.run(inlinePrompt, deps.config.reposDir, { maxTurns: 10 }, (event) => {
-            if (event.kind === "tool") msg.updateStatus(`Using ${event.tool}...`);
-          });
-          const parts = splitAndReply(result.output, msg.platform);
-          for (const part of parts) await msg.reply(part);
-          deps.sessions.addMessage(msg.userId, "assistant", result.output.slice(0, 500));
+          const result = await runner.run(resolvePrompt, deps.config.reposDir, { maxTurns: 1 });
+          const resolved = result.output.trim().replace(/[`"']/g, "");
+
+          if (resolved === "UNKNOWN" || !repoNames.includes(resolved)) {
+            const reply = `Which repo? I see ${repoNames.length} repos. Some matches: ${repoNames.slice(0, 10).join(", ")}${repoNames.length > 10 ? "..." : ""}.\nSay it again with 'on <repo>'.`;
+            await msg.reply(reply);
+            deps.sessions.addMessage(msg.userId, "assistant", reply);
+            return;
+          }
+
+          parsed.repo = resolved;
+          logger.info("repo resolved via LLM", { resolved, userText: parsed.rawText.slice(0, 80) });
         } catch (err) {
-          await msg.reply(`Error: ${String(err).slice(0, 500)}`);
+          await msg.reply(`Couldn't figure out the repo: ${String(err).slice(0, 300)}`);
+          return;
         }
-        return;
       }
     } else {
       const reply = "You don't have access to any repos yet. Set one up:\n`init repo <name> <git-url> [branch]`\nExample: `init repo my-app git@github.com:user/my-app.git`";

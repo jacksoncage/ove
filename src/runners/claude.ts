@@ -72,7 +72,7 @@ export class ClaudeRunner implements AgentRunner {
     }
 
     let resultText: string | null = null;
-    let lastTextBlock: string | null = null;
+    const textBlocks: string[] = [];
     const decoder = new TextDecoder();
     const reader = proc.stdout.getReader();
     try {
@@ -90,7 +90,7 @@ export class ClaudeRunner implements AgentRunner {
             if (msg.type === "assistant" && msg.message?.content) {
               for (const block of msg.message.content) {
                 if (block.type === "text") {
-                  lastTextBlock = block.text;
+                  textBlocks.push(block.text);
                   if (onStatus) onStatus({ kind: "text", text: block.text });
                 }
                 if (block.type === "tool_use" && onStatus) {
@@ -125,7 +125,7 @@ export class ClaudeRunner implements AgentRunner {
       return { success: false, output: stderr || "Claude task failed", durationMs };
     }
 
-    const finalOutput = resultText || lastTextBlock || "Task completed (no output)";
+    const finalOutput = resultText || textBlocks.join("\n\n") || "Task completed (no output)";
     logger.info("claude task completed", { durationMs });
     return { success: true, output: finalOutput, durationMs };
   }
