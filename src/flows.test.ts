@@ -238,6 +238,26 @@ describe("buildContextualPrompt", () => {
   });
 });
 
+describe("Conversation-aware repo resolution", () => {
+  it("derives lastRepo from recent task history", () => {
+    const db = new Database(":memory:");
+    db.run("PRAGMA journal_mode = WAL");
+    const queue = new TaskQueue(db);
+
+    const taskId = queue.enqueue({
+      userId: "telegram:U1",
+      repo: "iris",
+      prompt: "check the roadmap",
+    });
+    queue.dequeue();
+    queue.complete(taskId, "Here's the roadmap...");
+
+    const recent = queue.listByUser("telegram:U1", 1);
+    expect(recent.length).toBe(1);
+    expect(recent[0].repo).toBe("iris");
+  });
+});
+
 describe("Queue round-trip with taskType", () => {
   let queue: TaskQueue;
 
