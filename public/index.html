@@ -6,86 +6,568 @@
   <title>Ove</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: monospace; background: #1a1a1a; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
-    #messages { flex: 1; overflow-y: auto; padding: 1rem; }
-    .msg { margin-bottom: 0.75rem; white-space: pre-wrap; }
-    .msg.user { color: #8ab4f8; }
-    .msg.ove { color: #e0e0e0; }
-    .msg.status { color: #888; font-size: 0.85rem; }
-    .msg.error { color: #f28b82; }
-    #top-bar { display: flex; align-items: center; padding: 0.4rem 0.75rem; border-bottom: 1px solid #2a2a2a; background: #161616; }
-    #top-bar .title { font-size: 0.85rem; font-weight: 600; color: #e0e0e0; letter-spacing: 0.05em; }
-    #top-bar a { color: #777; text-decoration: none; font-size: 0.75rem; padding: 0.2rem 0.5rem; border: 1px solid #2a2a2a; border-radius: 3px; margin-left: 1rem; }
-    #top-bar a:hover { color: #e0e0e0; border-color: #333; }
-    #input-bar { display: flex; padding: 0.5rem; border-top: 1px solid #333; }
-    #input-bar input { flex: 1; background: #2a2a2a; border: 1px solid #444; color: #e0e0e0; padding: 0.5rem; font-family: monospace; font-size: 1rem; }
-    #input-bar button { background: #333; color: #e0e0e0; border: 1px solid #444; padding: 0.5rem 1rem; cursor: pointer; font-family: monospace; }
-    #input-bar button:hover { background: #444; }
+
+    :root {
+      --bg: #1a1a1a;
+      --bg-panel: #161616;
+      --bg-item: #1e1e1e;
+      --bg-item-hover: #252525;
+      --bg-item-active: #2a2a2a;
+      --border: #2a2a2a;
+      --border-light: #333;
+      --text: #e0e0e0;
+      --text-dim: #777;
+      --text-muted: #555;
+      --accent: #8ab4f8;
+      --green: #4ade80;
+      --green-dim: #16361f;
+      --red: #f28b82;
+      --red-dim: #3b1a1a;
+      --amber: #fbbf24;
+      --amber-dim: #3b2e0a;
+      --cyan: #22d3ee;
+      --cyan-dim: #0a2e33;
+    }
+
+    body {
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-panel);
+      flex-shrink: 0;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .header-left h1 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    .nav-link {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      transition: all 0.15s;
+    }
+    .nav-link:hover { color: var(--text); border-color: var(--border-light); }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 280px;
+      min-width: 200px;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-panel);
+      flex-shrink: 0;
+      transition: width 0.2s;
+    }
+
+    .sidebar.collapsed { width: 0; min-width: 0; overflow: hidden; border-right: none; }
+
+    .sidebar-toggle {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-family: inherit;
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .sidebar-toggle:hover { color: var(--text); border-color: var(--border-light); }
+
+    .sidebar-section {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-section-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .sidebar-section-count {
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .sidebar-list {
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .sidebar-tasks { max-height: 50vh; }
+    .sidebar-history { flex: 1; }
+
+    .sidebar-item {
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.1s;
+      position: relative;
+    }
+
+    .sidebar-item:hover { background: var(--bg-item-hover); }
+    .sidebar-item.active { background: var(--bg-item-active); }
+    .sidebar-item.active::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 2px;
+      background: var(--accent);
+    }
+
+    .task-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-bottom: 0.15rem;
+    }
+
+    .badge {
+      font-size: 0.55rem;
+      padding: 0.05rem 0.3rem;
+      border-radius: 2px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .badge-pending   { background: var(--amber-dim); color: var(--amber); }
+    .badge-running   { background: var(--cyan-dim); color: var(--cyan); }
+    .badge-completed { background: var(--green-dim); color: var(--green); }
+    .badge-failed    { background: var(--red-dim); color: var(--red); }
+
+    .task-repo {
+      font-size: 0.65rem;
+      color: var(--accent);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .task-time {
+      font-size: 0.55rem;
+      color: var(--text-muted);
+      margin-left: auto;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .task-prompt {
+      font-size: 0.65rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.3;
+    }
+
+    .history-item-role {
+      font-size: 0.55rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .history-item-content {
+      font-size: 0.65rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.3;
+    }
+
+    .history-item-time {
+      font-size: 0.55rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Links */
+    .sidebar-links {
+      padding: 0.5rem 0.75rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+    }
+
+    .sidebar-links a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.6rem;
+      padding: 0.15rem 0.4rem;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      transition: all 0.15s;
+    }
+    .sidebar-links a:hover { color: var(--text); border-color: var(--border-light); }
+
+    /* ── Chat area ── */
+    .chat-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .msg {
+      margin-bottom: 0.75rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.8rem;
+      line-height: 1.5;
+    }
+    .msg.user { color: var(--accent); }
+    .msg.ove { color: var(--text); }
+    .msg.status { color: var(--text-muted); font-size: 0.75rem; }
+    .msg.error { color: var(--red); }
+    .msg.system {
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    #input-bar {
+      display: flex;
+      padding: 0.5rem;
+      border-top: 1px solid var(--border);
+      background: var(--bg-panel);
+      flex-shrink: 0;
+    }
+
+    #input-bar input {
+      flex: 1;
+      background: var(--bg-item);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.5rem 0.75rem;
+      font-family: inherit;
+      font-size: 0.8rem;
+      border-radius: 3px;
+    }
+    #input-bar input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+
+    #input-bar button {
+      background: var(--bg-item);
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+      padding: 0.5rem 1rem;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.8rem;
+      border-radius: 3px;
+      margin-left: 0.4rem;
+      transition: all 0.15s;
+    }
+    #input-bar button:hover { color: var(--text); border-color: var(--border-light); }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
   </style>
 </head>
 <body>
-  <div id="top-bar">
-    <span class="title">ove</span>
-    <a href="/trace">traces</a>
+  <header>
+    <div class="header-left">
+      <h1>ove</h1>
+      <a href="/trace" class="nav-link">traces</a>
+    </div>
+    <div class="header-right">
+      <button class="sidebar-toggle" id="sidebarToggle">sidebar</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-section-header">
+          <span>Links</span>
+        </div>
+        <div class="sidebar-links" id="links">
+          <a href="/trace">traces</a>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-section-header">
+          <span>Tasks</span>
+          <span class="sidebar-section-count" id="taskCount"></span>
+        </div>
+        <div class="sidebar-list sidebar-tasks" id="taskList"></div>
+      </div>
+
+      <div class="sidebar-section" style="flex:1;display:flex;flex-direction:column">
+        <div class="sidebar-section-header">
+          <span>Chat history</span>
+        </div>
+        <div class="sidebar-list sidebar-history" id="historyList"></div>
+      </div>
+    </div>
+
+    <div class="chat-panel">
+      <div id="messages"></div>
+      <div id="input-bar">
+        <input id="msg" type="text" placeholder="Ask Ove something..." autofocus />
+        <button id="send">Send</button>
+      </div>
+    </div>
   </div>
-  <div id="messages"></div>
-  <div id="input-bar">
-    <input id="msg" type="text" placeholder="Ask Ove something..." autofocus />
-    <button id="send">Send</button>
-  </div>
+
   <script>
-    const API_KEY = localStorage.getItem("ove-api-key") || prompt("API Key:");
+    var API_KEY = localStorage.getItem("ove-api-key") || prompt("API Key:");
     if (API_KEY) localStorage.setItem("ove-api-key", API_KEY);
 
-    const msgs = document.getElementById("messages");
-    const input = document.getElementById("msg");
-    const btn = document.getElementById("send");
+    var msgs = document.getElementById("messages");
+    var input = document.getElementById("msg");
+    var btn = document.getElementById("send");
+    var sidebarEl = document.getElementById("sidebar");
+    var sidebarToggleEl = document.getElementById("sidebarToggle");
+    var taskListEl = document.getElementById("taskList");
+    var taskCountEl = document.getElementById("taskCount");
+    var historyListEl = document.getElementById("historyList");
+    var linksEl = document.getElementById("links");
 
+    function apiHeaders() { return { "X-API-Key": API_KEY }; }
+
+    function fmtTime(iso) {
+      if (!iso) return "";
+      var d = new Date(iso);
+      var m = Math.floor((Date.now() - d.getTime()) / 60000);
+      if (m < 1) return "now";
+      if (m < 60) return m + "m";
+      var h = Math.floor(m / 60);
+      if (h < 24) return h + "h";
+      return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    }
+
+    function truncate(s, n) {
+      if (!s) return "";
+      return s.length > n ? s.slice(0, n) + "..." : s;
+    }
+
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    }
+
+    function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+    // ── Sidebar toggle ──
+    var sidebarHidden = localStorage.getItem("ove-sidebar") === "hidden";
+    if (sidebarHidden) sidebarEl.classList.add("collapsed");
+
+    sidebarToggleEl.addEventListener("click", function () {
+      sidebarEl.classList.toggle("collapsed");
+      localStorage.setItem("ove-sidebar", sidebarEl.classList.contains("collapsed") ? "hidden" : "visible");
+    });
+
+    // ── Chat messages ──
     function addMsg(text, cls) {
-      const div = document.createElement("div");
-      div.className = "msg " + cls;
-      div.textContent = text;
+      var div = el("div", "msg " + cls, text);
       msgs.appendChild(div);
       msgs.scrollTop = msgs.scrollHeight;
       return div;
     }
 
     async function send() {
-      const text = input.value.trim();
+      var text = input.value.trim();
       if (!text) return;
       input.value = "";
       addMsg("> " + text, "user");
 
       try {
-        const res = await fetch("/api/message", {
+        var res = await fetch("/api/message", {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-API-Key": API_KEY },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text: text }),
         });
         if (!res.ok) { addMsg("Error: " + res.status, "error"); return; }
-        const { eventId } = await res.json();
+        var data = await res.json();
+        var eventId = data.eventId;
 
-        const statusDiv = addMsg("Working...", "status");
+        var statusDiv = addMsg("Working...", "status");
 
-        const sse = new EventSource("/api/message/" + eventId + "/stream?key=" + API_KEY);
-        sse.onmessage = (e) => {
-          const data = JSON.parse(e.data);
-          if (data.status === "completed") {
+        var sse = new EventSource("/api/message/" + eventId + "/stream?key=" + encodeURIComponent(API_KEY));
+        sse.onmessage = function (e) {
+          var d = JSON.parse(e.data);
+          if (d.status === "completed") {
             statusDiv.remove();
-            addMsg(data.result, "ove");
+            addMsg(d.result, "ove");
             sse.close();
-          } else if (data.statusText) {
-            statusDiv.textContent = data.statusText;
+            // Refresh sidebar
+            fetchTasks();
+            fetchHistory();
+          } else if (d.statusText) {
+            statusDiv.textContent = d.statusText;
           }
         };
-        sse.onerror = () => { sse.close(); };
+        sse.onerror = function () { sse.close(); };
       } catch (err) {
         addMsg("Error: " + err.message, "error");
       }
     }
 
     btn.addEventListener("click", send);
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") send(); });
+
+    // ── Tasks sidebar ──
+    async function fetchTasks() {
+      try {
+        var res = await fetch("/api/tasks?limit=20&key=" + encodeURIComponent(API_KEY), { headers: apiHeaders() });
+        if (!res.ok) return;
+        var tasks = await res.json();
+        taskCountEl.textContent = String(tasks.length);
+        clear(taskListEl);
+
+        for (var i = 0; i < tasks.length; i++) {
+          var t = tasks[i];
+          var item = el("div", "sidebar-item");
+
+          var row = el("div", "task-row");
+          row.appendChild(el("span", "badge badge-" + t.status, t.status));
+          row.appendChild(el("span", "task-repo", t.repo));
+          row.appendChild(el("span", "task-time", fmtTime(t.createdAt)));
+          item.appendChild(row);
+
+          // Extract a readable prompt (strip persona prefix)
+          var prompt = t.prompt || "";
+          var reqIdx = prompt.indexOf("Current request:\n");
+          var display = reqIdx >= 0 ? prompt.slice(reqIdx + 17) : prompt;
+          item.appendChild(el("div", "task-prompt", truncate(display, 80)));
+
+          (function (task) {
+            item.addEventListener("click", function () {
+              // Show task result in chat area
+              clear(msgs);
+              addMsg("[Task on " + task.repo + " — " + task.status + "]", "system");
+              if (task.result) addMsg(task.result, "ove");
+              // Link to trace
+              window.open("/trace?task=" + encodeURIComponent(task.id), "_blank");
+            });
+          })(t);
+
+          taskListEl.appendChild(item);
+        }
+      } catch (e) {
+        console.error("Failed to fetch tasks:", e);
+      }
+    }
+
+    // ── Chat history sidebar ──
+    async function fetchHistory() {
+      try {
+        var res = await fetch("/api/history/" + encodeURIComponent("http:web") + "?limit=30&key=" + encodeURIComponent(API_KEY), { headers: apiHeaders() });
+        if (!res.ok) return;
+        var history = await res.json();
+        clear(historyListEl);
+
+        // Group into pairs (user + assistant)
+        for (var i = 0; i < history.length; i++) {
+          var h = history[i];
+          var item = el("div", "sidebar-item");
+          var row = el("div", "task-row");
+          row.appendChild(el("span", "history-item-role", h.role));
+          row.appendChild(el("span", "history-item-time", fmtTime(h.timestamp)));
+          item.appendChild(row);
+          item.appendChild(el("div", "history-item-content", truncate(h.content, 60)));
+
+          (function (msg) {
+            item.addEventListener("click", function () {
+              addMsg((msg.role === "user" ? "> " : "") + msg.content, msg.role === "user" ? "user" : "ove");
+            });
+          })(h);
+
+          historyListEl.appendChild(item);
+        }
+      } catch (e) {
+        console.error("Failed to fetch history:", e);
+      }
+    }
+
+    // ── GitHub links ──
+    async function fetchGitHubLinks() {
+      // Fetch tasks to discover unique repos, then link to their GitHub pages
+      try {
+        var res = await fetch("/api/tasks?limit=100&key=" + encodeURIComponent(API_KEY), { headers: apiHeaders() });
+        if (!res.ok) return;
+        var tasks = await res.json();
+        var repos = {};
+        for (var i = 0; i < tasks.length; i++) {
+          repos[tasks[i].repo] = true;
+        }
+        var repoNames = Object.keys(repos).sort();
+        for (var i = 0; i < repoNames.length && i < 5; i++) {
+          var a = document.createElement("a");
+          a.href = "https://github.com/search?q=org%3Aseenthis-ab+" + encodeURIComponent(repoNames[i]) + "&type=repositories";
+          a.target = "_blank";
+          a.textContent = repoNames[i];
+          linksEl.appendChild(a);
+        }
+      } catch (e) {}
+    }
+
+    // ── Init ──
+    fetchTasks();
+    fetchHistory();
+    fetchGitHubLinks();
   </script>
 </body>
 </html>

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { EventAdapter, IncomingEvent, IncomingMessage } from "./types";
 import type { TraceStore } from "../trace";
 import type { TaskQueue } from "../queue";
+import type { SessionStore } from "../sessions";
 import { logger } from "../logger";
 
 interface PendingChat {
@@ -17,6 +18,7 @@ export class HttpApiAdapter implements EventAdapter {
   private apiKey: string;
   private trace: TraceStore;
   private queue: TaskQueue | null;
+  private sessions: SessionStore | null;
   private server?: ReturnType<typeof Bun.serve>;
   private onEvent?: (event: IncomingEvent) => void;
   private onMessage?: (msg: IncomingMessage) => void;
@@ -24,11 +26,12 @@ export class HttpApiAdapter implements EventAdapter {
   private webUiHtml: string;
   private traceUiHtml: string;
 
-  constructor(port: number, apiKey: string, trace: TraceStore, queue?: TaskQueue) {
+  constructor(port: number, apiKey: string, trace: TraceStore, queue?: TaskQueue, sessions?: SessionStore) {
     this.port = port;
     this.apiKey = apiKey;
     this.trace = trace;
     this.queue = queue || null;
+    this.sessions = sessions || null;
     const publicDir = join(import.meta.dir, "../../public");
     try {
       this.webUiHtml = readFileSync(join(publicDir, "index.html"), "utf-8");
@@ -214,6 +217,18 @@ export class HttpApiAdapter implements EventAdapter {
           const taskId = traceMatch[1];
           const events = self.trace.getByTask(taskId);
           return Response.json(events);
+        }
+
+        // GET /api/history/:userId — chat history for a user
+        const historyMatch = path.match(/^\/api\/history\/([^/]+)$/);
+        if (historyMatch && req.method === "GET") {
+          if (!self.sessions) {
+            return Response.json({ error: "Sessions not available" }, { status: 503 });
+          }
+          const userId = decodeURIComponent(historyMatch[1]);
+          const limit = Math.min(parseInt(url.searchParams.get("limit") || "50") || 50, 200);
+          const history = self.sessions.getHistory(userId, limit);
+          return Response.json(history);
         }
 
         return Response.json({ error: "Not found" }, { status: 404 });

@@ -139,7 +139,8 @@ if (process.env.HTTP_API_PORT) {
     parseInt(process.env.HTTP_API_PORT),
     process.env.HTTP_API_KEY || crypto.randomUUID(),
     trace,
-    queue
+    queue,
+    sessions
   );
   eventAdapters.push(httpAdapter);
 }
