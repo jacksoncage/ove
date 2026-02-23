@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { parseMessage, buildPrompt, buildContextualPrompt, type ParsedMessage } from "./router";
 import { TaskQueue } from "./queue";
+import { SessionStore } from "./sessions";
 
 describe("Conversational flow routing", () => {
   describe("discuss flows", () => {
@@ -328,5 +329,110 @@ describe("Queue round-trip with taskType", () => {
 
     const task = queue.dequeue();
     expect(task!.taskType).toBeNull();
+  });
+});
+
+describe("Full follow-up conversation flow", () => {
+  it("follow-up message without repo uses last task's repo", () => {
+    const db = new Database(":memory:");
+    db.run("PRAGMA journal_mode = WAL");
+    const queue = new TaskQueue(db);
+    const sessions = new SessionStore(db);
+
+    // Simulate conversation: user talked about iris
+    sessions.addMessage("telegram:U1", "user", "check the roadmap on iris");
+    sessions.addMessage("telegram:U1", "assistant", "Here's the iris roadmap...");
+    sessions.addMessage("telegram:U1", "user", "what about tomorrow's plan");
+
+    // Simulate a completed task on iris
+    const taskId = queue.enqueue({
+      userId: "telegram:U1",
+      repo: "iris",
+      prompt: "check the roadmap",
+    });
+    queue.dequeue();
+    queue.complete(taskId, "Here's the roadmap...");
+
+    // Now a follow-up: "what about tomorrow" — no repo mentioned
+    const parsed = parseMessage("what about tomorrow's plan");
+    expect(parsed.type).toBe("free-form");
+    expect(parsed.repo).toBeUndefined(); // Router can't find repo in text
+
+    // But the last task was on iris
+    const recentTasks = queue.listByUser("telegram:U1", 5);
+    const lastRepo = recentTasks.find(t => t.status === "completed" || t.status === "failed")?.repo;
+    expect(lastRepo).toBe("iris");
+
+    // And the conversation history mentions iris
+    const history = sessions.getHistory("telegram:U1", 6);
+    expect(history.some(m => m.content.includes("iris"))).toBe(true);
+  });
+
+  it("explicit repo in message overrides last task repo", () => {
+    const db = new Database(":memory:");
+    db.run("PRAGMA journal_mode = WAL");
+    const queue = new TaskQueue(db);
+
+    // Last task was on iris
+    const taskId = queue.enqueue({
+      userId: "telegram:U1",
+      repo: "iris",
+      prompt: "check roadmap",
+    });
+    queue.dequeue();
+    queue.complete(taskId, "done");
+
+    // But new message explicitly says "on docs"
+    const parsed = parseMessage("check the tests on docs");
+    expect(parsed.repo).toBe("docs"); // Regex hint takes priority
+  });
+
+  it("lastRepo only considers completed/failed tasks, not pending", () => {
+    const db = new Database(":memory:");
+    db.run("PRAGMA journal_mode = WAL");
+    const queue = new TaskQueue(db);
+
+    // Completed task on iris
+    const task1 = queue.enqueue({
+      userId: "telegram:U1",
+      repo: "iris",
+      prompt: "check roadmap",
+    });
+    queue.dequeue();
+    queue.complete(task1, "done");
+
+    // Pending task on docs (enqueued but not completed)
+    queue.enqueue({
+      userId: "telegram:U1",
+      repo: "docs",
+      prompt: "pending work",
+    });
+
+    // lastRepo should be iris (completed), not docs (pending)
+    const recentTasks = queue.listByUser("telegram:U1", 5);
+    const lastRepo = recentTasks.find(t => t.status === "completed" || t.status === "failed")?.repo;
+    expect(lastRepo).toBe("iris");
+  });
+
+  it("LLM resolver prompt includes conversation history", () => {
+    const db = new Database(":memory:");
+    const sessions = new SessionStore(db);
+
+    sessions.addMessage("telegram:U1", "user", "check the roadmap on iris");
+    sessions.addMessage("telegram:U1", "assistant", "Here's the iris roadmap...");
+    sessions.addMessage("telegram:U1", "user", "what about tomorrow");
+
+    const history = sessions.getHistory("telegram:U1", 6);
+    const historyContext = history.length > 1
+      ? "Recent conversation:\n" + history.slice(0, -1).map(m => `${m.role}: ${m.content}`).join("\n") + "\n\n"
+      : "";
+    const resolvePrompt = `You are a repo-name resolver. ${historyContext}The user's latest message:\n"what about tomorrow"\n\nAvailable repos: iris, docs, my-app\n\nRespond with ONLY the repo name that best matches their request. Consider the conversation context if the current message doesn't mention a specific repo. Nothing else — just the exact repo name from the list. If you cannot determine which repo, respond with "UNKNOWN".`;
+
+    expect(resolvePrompt).toContain("Recent conversation:");
+    expect(resolvePrompt).toContain("check the roadmap on iris");
+    expect(resolvePrompt).toContain("Here's the iris roadmap");
+    expect(resolvePrompt).toContain("what about tomorrow");
+    expect(resolvePrompt).toContain("iris, docs, my-app");
+    expect(resolvePrompt).toContain("Consider the conversation context");
   });
 });
