@@ -53,6 +53,7 @@ export class HttpApiAdapter implements EventAdapter {
 
     this.server = Bun.serve({
       port: this.port,
+      idleTimeout: 255, // SSE connections need to stay open for long-running tasks
       async fetch(req) {
         const url = new URL(req.url);
         const path = url.pathname;
