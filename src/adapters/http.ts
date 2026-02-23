@@ -1,13 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { EventAdapter, IncomingEvent } from "./types";
+import type { EventAdapter, IncomingEvent, IncomingMessage } from "./types";
 import type { TraceStore } from "../trace";
 import type { TaskQueue } from "../queue";
 import { logger } from "../logger";
 
-interface PendingEvent {
+interface PendingChat {
   status: "pending" | "completed";
-  result?: string;
+  replies: string[];
   statusText?: string;
   sseControllers: ReadableStreamDefaultController[];
 }
@@ -19,7 +19,8 @@ export class HttpApiAdapter implements EventAdapter {
   private queue: TaskQueue | null;
   private server?: ReturnType<typeof Bun.serve>;
   private onEvent?: (event: IncomingEvent) => void;
-  private events = new Map<string, PendingEvent>();
+  private onMessage?: (msg: IncomingMessage) => void;
+  private chats = new Map<string, PendingChat>();
   private webUiHtml: string;
   private traceUiHtml: string;
 
@@ -39,6 +40,11 @@ export class HttpApiAdapter implements EventAdapter {
     } catch {
       this.traceUiHtml = "<html><body><p>Trace viewer not found. Place public/trace.html in project root.</p></body></html>";
     }
+  }
+
+  /** Set the chat message handler so web UI messages go through the full chat pipeline */
+  setMessageHandler(handler: (msg: IncomingMessage) => void): void {
+    this.onMessage = handler;
   }
 
   async start(onEvent: (event: IncomingEvent) => void): Promise<void> {
@@ -92,32 +98,70 @@ export class HttpApiAdapter implements EventAdapter {
           })));
         }
 
-        // POST /api/message — submit a task
+        // POST /api/message — submit a chat message (full chat pipeline)
         if (path === "/api/message" && req.method === "POST") {
           const body = await req.json() as { text: string; userId?: string };
-          const eventId = crypto.randomUUID();
-          const userId = body.userId || "http:anon";
+          const chatId = crypto.randomUUID();
+          const userId = body.userId || "http:web";
 
-          self.events.set(eventId, { status: "pending", sseControllers: [] });
+          const chat: PendingChat = { status: "pending", replies: [], sseControllers: [] };
+          self.chats.set(chatId, chat);
 
-          const event: IncomingEvent = {
-            eventId,
-            userId,
-            platform: "http",
-            source: { type: "http", requestId: eventId },
-            text: body.text,
-          };
+          function notifySSE(data: object) {
+            const payload = JSON.stringify(data);
+            for (const ctrl of chat.sseControllers) {
+              try { ctrl.enqueue(`data: ${payload}\n\n`); } catch {}
+            }
+          }
 
-          self.onEvent?.(event);
-          return Response.json({ eventId }, { status: 202 });
+          if (self.onMessage) {
+            // Route through full chat handler (commands, session, repo resolution, etc.)
+            let closeTimer: ReturnType<typeof setTimeout> | null = null;
+            const msg: IncomingMessage = {
+              userId,
+              platform: "http",
+              text: body.text,
+              reply: async (text: string) => {
+                chat.replies.push(text);
+                chat.status = "completed";
+                notifySSE({ status: "completed", result: chat.replies.join("\n\n") });
+                // Delay closing SSE to allow multiple split replies to arrive
+                if (closeTimer) clearTimeout(closeTimer);
+                closeTimer = setTimeout(() => {
+                  for (const ctrl of chat.sseControllers) {
+                    try { ctrl.close(); } catch {}
+                  }
+                  chat.sseControllers = [];
+                  setTimeout(() => self.chats.delete(chatId), 5 * 60 * 1000);
+                }, 500);
+              },
+              updateStatus: async (text: string) => {
+                chat.statusText = text;
+                notifySSE({ status: "pending", statusText: text });
+              },
+            };
+            self.onMessage(msg);
+          } else {
+            // Fallback to event handler
+            const event: IncomingEvent = {
+              eventId: chatId,
+              userId,
+              platform: "http",
+              source: { type: "http", requestId: chatId },
+              text: body.text,
+            };
+            self.onEvent?.(event);
+          }
+
+          return Response.json({ eventId: chatId }, { status: 202 });
         }
 
         // GET /api/message/:id/stream — SSE stream
         const streamMatch = path.match(/^\/api\/message\/([^/]+)\/stream$/);
         if (streamMatch && req.method === "GET") {
-          const eventId = streamMatch[1];
-          const pending = self.events.get(eventId);
-          if (!pending) {
+          const chatId = streamMatch[1];
+          const chat = self.chats.get(chatId);
+          if (!chat) {
             return Response.json({ error: "Not found" }, { status: 404 });
           }
 
@@ -125,18 +169,18 @@ export class HttpApiAdapter implements EventAdapter {
           const stream = new ReadableStream({
             start(controller) {
               sseController = controller;
-              pending.sseControllers.push(controller);
+              chat.sseControllers.push(controller);
               // Send current state immediately
               const data = JSON.stringify({
-                status: pending.status,
-                result: pending.result,
-                statusText: pending.statusText,
+                status: chat.status,
+                result: chat.replies.length > 0 ? chat.replies.join("\n\n") : undefined,
+                statusText: chat.statusText,
               });
               controller.enqueue(`data: ${data}\n\n`);
             },
             cancel() {
-              const idx = pending.sseControllers.indexOf(sseController);
-              if (idx >= 0) pending.sseControllers.splice(idx, 1);
+              const idx = chat.sseControllers.indexOf(sseController);
+              if (idx >= 0) chat.sseControllers.splice(idx, 1);
             },
           });
 
@@ -152,14 +196,14 @@ export class HttpApiAdapter implements EventAdapter {
         // GET /api/message/:id — poll status
         const getMatch = path.match(/^\/api\/message\/([^/]+)$/);
         if (getMatch && req.method === "GET") {
-          const eventId = getMatch[1];
-          const pending = self.events.get(eventId);
-          if (!pending) {
+          const chatId = getMatch[1];
+          const chat = self.chats.get(chatId);
+          if (!chat) {
             return Response.json({ error: "Not found" }, { status: 404 });
           }
           return Response.json({
-            status: pending.status,
-            result: pending.result,
+            status: chat.status,
+            result: chat.replies.length > 0 ? chat.replies.join("\n\n") : undefined,
           });
         }
 
@@ -184,15 +228,15 @@ export class HttpApiAdapter implements EventAdapter {
   }
 
   async respondToEvent(eventId: string, text: string): Promise<void> {
-    const pending = this.events.get(eventId);
-    if (!pending) return;
+    const chat = this.chats.get(eventId);
+    if (!chat) return;
 
-    pending.status = "completed";
-    pending.result = text;
+    chat.status = "completed";
+    chat.replies.push(text);
 
     // Notify SSE listeners
-    const data = JSON.stringify({ status: "completed", result: text });
-    for (const controller of pending.sseControllers) {
+    const data = JSON.stringify({ status: "completed", result: chat.replies.join("\n\n") });
+    for (const controller of chat.sseControllers) {
       try {
         controller.enqueue(`data: ${data}\n\n`);
         controller.close();
@@ -200,20 +244,20 @@ export class HttpApiAdapter implements EventAdapter {
         logger.debug("sse enqueue failed", { eventId, error: String(err) });
       }
     }
-    pending.sseControllers = [];
+    chat.sseControllers = [];
 
-    // Clean up event after 5 minutes
-    setTimeout(() => this.events.delete(eventId), 5 * 60 * 1000);
+    // Clean up after 5 minutes
+    setTimeout(() => this.chats.delete(eventId), 5 * 60 * 1000);
   }
 
   /** Called by index.ts to push status updates to SSE clients */
   updateEventStatus(eventId: string, statusText: string): void {
-    const pending = this.events.get(eventId);
-    if (!pending) return;
-    pending.statusText = statusText;
+    const chat = this.chats.get(eventId);
+    if (!chat) return;
+    chat.statusText = statusText;
 
     const data = JSON.stringify({ status: "pending", statusText });
-    for (const controller of pending.sseControllers) {
+    for (const controller of chat.sseControllers) {
       try {
         controller.enqueue(`data: ${data}\n\n`);
       } catch (err) {
