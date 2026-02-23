@@ -415,9 +415,9 @@ async function handleTaskMessage(msg: IncomingMessage, parsed: ParsedMessage, de
         await msg.reply(reply);
         return;
       } else {
-        // Try last task's repo first (cheap)
-        const recentTasks = deps.queue.listByUser(msg.userId, 1);
-        const lastRepo = recentTasks[0]?.repo;
+        // Try last completed task's repo first (cheap)
+        const recentTasks = deps.queue.listByUser(msg.userId, 5);
+        const lastRepo = recentTasks.find(t => t.status === "completed" || t.status === "failed")?.repo;
         if (lastRepo && repoNames.includes(lastRepo)) {
           parsed.repo = lastRepo;
           logger.info("repo resolved from recent task", { resolved: lastRepo, userText: parsed.rawText.slice(0, 80) });
