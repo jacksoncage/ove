@@ -130,8 +130,9 @@ sudo systemctl enable --now ove
 ### HTTP API + Web UI
 
 1. Set `HTTP_API_PORT=3000` and `HTTP_API_KEY=<your-secret>` in `.env`
-2. Open `http://localhost:3000` for the Web UI
-3. Or call the API directly: `curl -X POST http://localhost:3000/api/message -H "X-API-Key: <key>" -H "Content-Type: application/json" -d '{"text": "validate my-app"}'`
+2. Open `http://localhost:3000` for the chat UI
+3. Open `http://localhost:3000/trace` for the trace viewer (see [Web Pages](#web-pages) below)
+4. Or call the API directly: `curl -X POST http://localhost:3000/api/message -H "X-API-Key: <key>" -H "Content-Type: application/json" -d '{"text": "validate my-app"}'`
 
 ### GitHub (issue/PR comments)
 
@@ -142,8 +143,9 @@ sudo systemctl enable --now ove
 
 ### WhatsApp
 
-1. Set `WHATSAPP_ENABLED=true` in `.env`
-2. Scan the QR code printed in the terminal on first start
+1. Set `WHATSAPP_ENABLED=true` and `WHATSAPP_PHONE=<your-number>` in `.env`
+2. Start Ove and enter the pairing code on your phone (WhatsApp → Linked Devices → Link a Device)
+3. Set `WHATSAPP_ALLOWED_CHATS=<phone1>,<phone2>` to limit which chats Ove listens to. Without this, Ove responds to **all** your outgoing messages in every chat. Use phone numbers (e.g. `46701234567`) for individual chats or full JIDs (e.g. `120363xxx@g.us`) for groups.
 
 ## Config
 
@@ -195,6 +197,44 @@ Per-repo `runner` overrides the global default. Supported runners: `"claude"` (d
 
 Static cron jobs go in `config.json`. Users can also create schedules via chat — these are stored in SQLite and managed with `list schedules` / `remove schedule #N`.
 
+## Web Pages
+
+The HTTP adapter serves two pages (no auth required to load — API key is entered in-browser and stored in `localStorage`):
+
+| Route | Page | Description |
+|-------|------|-------------|
+| `/` | Chat UI | Send messages to Ove, see streaming status updates and results |
+| `/trace` | Trace Viewer | Browse tasks and inspect per-task trace timelines |
+
+### Trace Viewer (`/trace`)
+
+A debugging dashboard for inspecting what happened during task execution.
+
+- **Left panel** — Task list with status badges, repo name, prompt preview, and relative timestamps. Filterable by repo, user, and status.
+- **Right panel** — When a task is selected, shows:
+  - **Context card** — Full prompt, user, repo, status, created/done timestamps, and total duration.
+  - **Trace timeline** — Chronological events with color-coded kinds: lifecycle (green), tool (blue), status (gray), output (white), error (red). Each event with detail data can be expanded individually.
+- **Toolbar** — "show all details" expands every trace event at once, "copy json" copies the full task + trace data as JSON for troubleshooting.
+- **Auto-refresh** — Toggle to poll every 3 seconds, useful for watching running tasks.
+
+### Tracing
+
+Tracing records per-task event timelines in SQLite. Enable it with:
+
+```bash
+OVE_TRACE=true
+```
+
+Trace events are also accessible via chat (`trace <task-id>`) and the API:
+
+```bash
+# List recent tasks
+curl http://localhost:3000/api/tasks?key=<key>&limit=20&status=completed
+
+# Get trace for a specific task
+curl http://localhost:3000/api/trace/<task-id>?key=<key>
+```
+
 ## Testing
 
 ```bash
@@ -211,7 +251,8 @@ bun test    # 150 tests
 6. Each task gets an isolated git worktree
 7. Runs the configured agent runner (`claude -p` or `codex exec`) with streaming JSON output
 8. Status updates stream back (chat: edits a message, HTTP: SSE, GitHub: single comment)
-9. Result sent back, worktree cleaned up
+9. If tracing is enabled (`OVE_TRACE=true`), lifecycle events, tool calls, and outputs are recorded in SQLite — viewable in the trace viewer at `/trace`
+10. Result sent back, worktree cleaned up
 
 See [example conversations](docs/examples.md) for all flows.
 

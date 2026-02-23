@@ -1,4 +1,7 @@
+import { Database } from "bun:sqlite";
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { TraceStore } from "../trace";
+import { TaskQueue } from "../queue";
 import type { IncomingEvent } from "./types";
 
 let adapter: any;
@@ -10,7 +13,10 @@ describe("HttpApiAdapter", () => {
   beforeAll(async () => {
     const { HttpApiAdapter } = await import("./http");
     receivedEvents = [];
-    adapter = new HttpApiAdapter(TEST_PORT, API_KEY);
+    const db = new Database(":memory:");
+    const trace = new TraceStore(db);
+    const queue = new TaskQueue(db);
+    adapter = new HttpApiAdapter(TEST_PORT, API_KEY, trace, queue);
     await adapter.start((event: IncomingEvent) => {
       receivedEvents.push(event);
     });

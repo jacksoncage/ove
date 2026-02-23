@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { EventAdapter, IncomingEvent } from "./types";
+import type { TraceStore } from "../trace";
+import type { TaskQueue } from "../queue";
 import { logger } from "../logger";
 
 interface PendingEvent {
@@ -13,18 +15,29 @@ interface PendingEvent {
 export class HttpApiAdapter implements EventAdapter {
   private port: number;
   private apiKey: string;
+  private trace: TraceStore;
+  private queue: TaskQueue | null;
   private server?: ReturnType<typeof Bun.serve>;
   private onEvent?: (event: IncomingEvent) => void;
   private events = new Map<string, PendingEvent>();
   private webUiHtml: string;
+  private traceUiHtml: string;
 
-  constructor(port: number, apiKey: string) {
+  constructor(port: number, apiKey: string, trace: TraceStore, queue?: TaskQueue) {
     this.port = port;
     this.apiKey = apiKey;
+    this.trace = trace;
+    this.queue = queue || null;
+    const publicDir = join(import.meta.dir, "../../public");
     try {
-      this.webUiHtml = readFileSync(join(import.meta.dir, "../../public/index.html"), "utf-8");
+      this.webUiHtml = readFileSync(join(publicDir, "index.html"), "utf-8");
     } catch {
       this.webUiHtml = "<html><body><p>Web UI not found. Place public/index.html in project root.</p></body></html>";
+    }
+    try {
+      this.traceUiHtml = readFileSync(join(publicDir, "trace.html"), "utf-8");
+    } catch {
+      this.traceUiHtml = "<html><body><p>Trace viewer not found. Place public/trace.html in project root.</p></body></html>";
     }
   }
 
@@ -45,12 +58,38 @@ export class HttpApiAdapter implements EventAdapter {
           });
         }
 
+        if (path === "/trace" || path === "/trace.html") {
+          return new Response(self.traceUiHtml, {
+            headers: { "Content-Type": "text/html" },
+          });
+        }
+
         // Auth check for API routes
         if (path.startsWith("/api/")) {
           const key = req.headers.get("X-API-Key") || url.searchParams.get("key");
           if (key !== self.apiKey) {
             return Response.json({ error: "Unauthorized" }, { status: 401 });
           }
+        }
+
+        // GET /api/tasks — list recent tasks
+        if (path === "/api/tasks" && req.method === "GET") {
+          if (!self.queue) {
+            return Response.json({ error: "Task queue not available" }, { status: 503 });
+          }
+          const limit = Math.min(parseInt(url.searchParams.get("limit") || "20") || 20, 100);
+          const status = url.searchParams.get("status") || undefined;
+          const tasks = self.queue.listRecent(limit, status);
+          return Response.json(tasks.map((t) => ({
+            id: t.id,
+            userId: t.userId,
+            repo: t.repo,
+            prompt: t.prompt,
+            status: t.status,
+            result: t.result && t.result.length > 300 ? t.result.slice(0, 300) + "..." : t.result,
+            createdAt: t.createdAt,
+            completedAt: t.completedAt,
+          })));
         }
 
         // POST /api/message — submit a task
@@ -82,8 +121,10 @@ export class HttpApiAdapter implements EventAdapter {
             return Response.json({ error: "Not found" }, { status: 404 });
           }
 
+          let sseController: ReadableStreamDefaultController;
           const stream = new ReadableStream({
             start(controller) {
+              sseController = controller;
               pending.sseControllers.push(controller);
               // Send current state immediately
               const data = JSON.stringify({
@@ -94,7 +135,7 @@ export class HttpApiAdapter implements EventAdapter {
               controller.enqueue(`data: ${data}\n\n`);
             },
             cancel() {
-              const idx = pending.sseControllers.indexOf(controller);
+              const idx = pending.sseControllers.indexOf(sseController);
               if (idx >= 0) pending.sseControllers.splice(idx, 1);
             },
           });
@@ -120,6 +161,14 @@ export class HttpApiAdapter implements EventAdapter {
             status: pending.status,
             result: pending.result,
           });
+        }
+
+        // GET /api/trace/:taskId — trace events for a task
+        const traceMatch = path.match(/^\/api\/trace\/([^/]+)$/);
+        if (traceMatch && req.method === "GET") {
+          const taskId = traceMatch[1];
+          const events = self.trace.getByTask(taskId);
+          return Response.json(events);
         }
 
         return Response.json({ error: "Not found" }, { status: 404 });

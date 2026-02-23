@@ -13,6 +13,10 @@
     .msg.ove { color: #e0e0e0; }
     .msg.status { color: #888; font-size: 0.85rem; }
     .msg.error { color: #f28b82; }
+    #top-bar { display: flex; align-items: center; padding: 0.4rem 0.75rem; border-bottom: 1px solid #2a2a2a; background: #161616; }
+    #top-bar .title { font-size: 0.85rem; font-weight: 600; color: #e0e0e0; letter-spacing: 0.05em; }
+    #top-bar a { color: #777; text-decoration: none; font-size: 0.75rem; padding: 0.2rem 0.5rem; border: 1px solid #2a2a2a; border-radius: 3px; margin-left: 1rem; }
+    #top-bar a:hover { color: #e0e0e0; border-color: #333; }
     #input-bar { display: flex; padding: 0.5rem; border-top: 1px solid #333; }
     #input-bar input { flex: 1; background: #2a2a2a; border: 1px solid #444; color: #e0e0e0; padding: 0.5rem; font-family: monospace; font-size: 1rem; }
     #input-bar button { background: #333; color: #e0e0e0; border: 1px solid #444; padding: 0.5rem 1rem; cursor: pointer; font-family: monospace; }
@@ -20,6 +24,10 @@
   </style>
 </head>
 <body>
+  <div id="top-bar">
+    <span class="title">ove</span>
+    <a href="/trace">traces</a>
+  </div>
   <div id="messages"></div>
   <div id="input-bar">
     <input id="msg" type="text" placeholder="Ask Ove something..." autofocus />

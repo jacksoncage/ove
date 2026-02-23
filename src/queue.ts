@@ -143,6 +143,28 @@ export class TaskQueue {
     return result.changes > 0;
   }
 
+  listRecentFailed(limit: number = 20): Task[] {
+    const rows = this.db
+      .query(
+        `SELECT * FROM tasks WHERE status = 'failed' ORDER BY completed_at DESC LIMIT ?`
+      )
+      .all(limit) as TaskRow[];
+    return rows.map((r) => this.rowToTask(r));
+  }
+
+  listRecent(limit: number = 20, status?: string): Task[] {
+    let sql = `SELECT * FROM tasks`;
+    const params: (string | number)[] = [];
+    if (status) {
+      sql += ` WHERE status = ?`;
+      params.push(status);
+    }
+    sql += ` ORDER BY created_at DESC LIMIT ?`;
+    params.push(limit);
+    const rows = this.db.query(sql).all(...params) as TaskRow[];
+    return rows.map((r) => this.rowToTask(r));
+  }
+
   resetStale(): number {
     const result = this.db.run(
       `UPDATE tasks SET status = 'failed', result = 'Interrupted — process restarted', completed_at = ? WHERE status = 'running'`,

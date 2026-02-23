@@ -51,8 +51,8 @@ export class TelegramAdapter implements ChatAdapter {
             const sent = await ctx.reply(html, { parse_mode: "HTML" });
             statusMsgId = sent.message_id;
           }
-        } catch {
-          // Edit may fail if content unchanged or message too old — ignore
+        } catch (err) {
+          logger.warn("telegram status update failed", { error: String(err) });
         }
       }, 3000);
 
@@ -67,8 +67,8 @@ export class TelegramAdapter implements ChatAdapter {
               await ctx.api.editMessageText(chatId, statusMsgId, mdToHtml(replyText), { parse_mode: "HTML" });
               statusMsgId = undefined;
               return;
-            } catch {
-              // Edit failed (message too old, etc.) — fall through to send new
+            } catch (err) {
+              logger.warn("telegram reply edit failed, sending new message", { error: String(err) });
             }
             statusMsgId = undefined;
           }

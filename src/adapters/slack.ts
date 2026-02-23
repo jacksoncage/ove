@@ -32,7 +32,8 @@ export class SlackAdapter implements ChatAdapter {
             ts: statusMsgTs,
             text: statusText,
           });
-        } catch {
+        } catch (err) {
+          logger.warn("slack status update failed", { error: String(err) });
           const result = await say(statusText);
           if (result && "ts" in result) statusMsgTs = result.ts;
         }

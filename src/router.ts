@@ -15,7 +15,8 @@ export type MessageType =
   | "list-schedules"
   | "remove-schedule"
   | "list-tasks"
-  | "cancel-task";
+  | "cancel-task"
+  | "trace";
 
 export interface ParsedMessage {
   type: MessageType;
@@ -44,6 +45,9 @@ export function parseMessage(text: string): ParsedMessage {
   if (lower === "tasks" || lower === "/tasks") return { type: "list-tasks", args: {}, rawText: trimmed };
   const cancelMatch = trimmed.match(/^(?:\/)?cancel\s+(\S+)$/i);
   if (cancelMatch) return { type: "cancel-task", args: { taskId: cancelMatch[1] }, rawText: trimmed };
+
+  const traceMatch = trimmed.match(/^(?:\/)?trace(?:\s+(\S+))?$/i);
+  if (traceMatch) return { type: "trace", args: { taskId: traceMatch[1] }, rawText: trimmed };
 
   // Natural language status inquiries — short messages asking about progress
   if (isStatusInquiry(lower)) return { type: "status", args: {}, rawText: trimmed };

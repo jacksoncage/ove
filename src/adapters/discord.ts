@@ -48,7 +48,8 @@ export class DiscordAdapter implements ChatAdapter {
           } else {
             statusMsg = await discordMsg.channel.send(statusText);
           }
-        } catch {
+        } catch (err) {
+          logger.warn("discord status update failed", { error: String(err) });
           statusMsg = await discordMsg.channel.send(statusText);
         }
       }, 3000);

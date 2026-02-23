@@ -3,6 +3,20 @@ import { logger } from "../logger";
 import { which } from "bun";
 import { realpathSync } from "node:fs";
 
+const TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+function withTimeout(proc: { exited: Promise<number>; kill(): void }): Promise<number | "timeout"> {
+  return Promise.race([
+    proc.exited,
+    new Promise<"timeout">((resolve) =>
+      setTimeout(() => {
+        proc.kill();
+        resolve("timeout");
+      }, TIMEOUT_MS)
+    ),
+  ]);
+}
+
 export function summarizeToolInput(name: string, input: any): string {
   if (!input) return "";
   switch (name) {
@@ -97,8 +111,13 @@ export class ClaudeRunner implements AgentRunner {
       reader.releaseLock();
     }
 
-    const exitCode = await proc.exited;
+    const exitCode = await withTimeout(proc);
     const durationMs = Date.now() - startTime;
+
+    if (exitCode === "timeout") {
+      logger.error("claude task timed out", { durationMs });
+      return { success: false, output: `Claude task timed out after ${TIMEOUT_MS / 60000} minutes`, durationMs };
+    }
 
     if (exitCode !== 0) {
       const stderr = await new Response(proc.stderr).text();

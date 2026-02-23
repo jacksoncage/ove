@@ -12,12 +12,14 @@ export class WhatsAppAdapter implements ChatAdapter {
   private onMessage?: (msg: IncomingMessage) => void;
   private authDir: string;
   private phoneNumber?: string;
+  private allowedChats: Set<string>;
   private reconnectAttempt = 0;
   private sentByBot = new Set<string>();
 
-  constructor(opts: { authDir?: string; phoneNumber?: string } = {}) {
+  constructor(opts: { authDir?: string; phoneNumber?: string; allowedChats?: string[] } = {}) {
     this.authDir = opts.authDir ?? "./auth/whatsapp";
     this.phoneNumber = opts.phoneNumber;
+    this.allowedChats = new Set(opts.allowedChats ?? []);
   }
 
   async start(onMessage: (msg: IncomingMessage) => void): Promise<void> {
@@ -77,6 +79,14 @@ export class WhatsAppAdapter implements ChatAdapter {
 
         // Skip messages from others (not our phone) — we only process our own commands
         if (!waMsg.key.fromMe) continue;
+
+        // Only process messages in whitelisted chats (if configured)
+        if (this.allowedChats.size > 0) {
+          const jid = waMsg.key.remoteJid;
+          if (!jid) continue;
+          const chatId = jid.split("@")[0];
+          if (!this.allowedChats.has(jid) && !this.allowedChats.has(chatId)) continue;
+        }
 
         const text =
           waMsg.message.conversation ||

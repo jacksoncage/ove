@@ -10,6 +10,7 @@ import type { ScheduleStore } from "./schedules";
 import type { RepoRegistry } from "./repo-registry";
 import type { IncomingMessage, EventAdapter, IncomingEvent } from "./adapters/types";
 import type { AgentRunner } from "./runner";
+import type { TraceStore } from "./trace";
 
 export interface HandlerDeps {
   config: Config;
@@ -17,6 +18,7 @@ export interface HandlerDeps {
   sessions: SessionStore;
   schedules: ScheduleStore;
   repoRegistry: RepoRegistry;
+  trace: TraceStore;
   pendingReplies: Map<string, IncomingMessage>;
   pendingEventReplies: Map<string, { adapter: EventAdapter; event: IncomingEvent }>;
   runningProcesses: Map<string, { abort: AbortController; task: Task }>;
@@ -147,6 +149,7 @@ async function handleHelp(msg: IncomingMessage, deps: HandlerDeps) {
     "• init repo <name> <git-url> [branch] — set up a repo from chat",
     "• tasks — see running and pending tasks",
     "• cancel <id> — kill a running or pending task",
+    "• trace [task-id] — see what happened step by step",
     "• status / history / clear",
     "• <task> every day/weekday at <time> [on <repo>] — schedule a recurring task",
     "• list schedules — see your scheduled tasks",
@@ -238,6 +241,44 @@ async function handleRemoveSchedule(msg: IncomingMessage, args: Record<string, a
     : `Schedule #${id} not found or not yours. I don't delete other people's things.`;
   await msg.reply(reply);
   deps.sessions.addMessage(msg.userId, "assistant", reply);
+}
+
+async function handleTrace(msg: IncomingMessage, args: Record<string, any>, deps: HandlerDeps) {
+  let taskId = args.taskId as string | undefined;
+
+  if (!taskId) {
+    const recent = deps.queue.listByUser(msg.userId, 1);
+    if (recent.length === 0) {
+      await msg.reply("No tasks found. Nothing to trace.");
+      return;
+    }
+    taskId = recent[0].id;
+  }
+
+  // Support prefix matching like cancel does
+  const task = deps.queue.get(taskId);
+  if (!task) {
+    await msg.reply(`No task found matching "${taskId}".`);
+    return;
+  }
+
+  const events = deps.trace.getByTask(task.id);
+  if (events.length === 0) {
+    const reason = deps.trace.isEnabled()
+      ? "No trace events recorded for this task."
+      : "Tracing is disabled. Set OVE_TRACE=true to enable.";
+    await msg.reply(reason);
+    return;
+  }
+
+  const lines = events.map((e) => {
+    const time = e.ts.slice(11, 19); // HH:MM:SS
+    const detail = e.detail ? ` — ${e.detail.slice(0, 120)}` : "";
+    return `${time} [${e.kind}] ${e.summary}${detail}`;
+  });
+
+  const reply = `Trace for ${task.id.slice(0, 7)} (${task.repo}):\n${lines.join("\n")}`;
+  await msg.reply(reply);
 }
 
 async function handleSchedule(msg: IncomingMessage, parsedRepo: string | undefined, deps: HandlerDeps) {
@@ -377,7 +418,12 @@ async function handleTaskMessage(msg: IncomingMessage, parsed: ParsedMessage, de
         const repoList = repoNames.join(", ");
         const history = deps.sessions.getHistory(msg.userId, 6);
         const formatHint = PLATFORM_FORMAT_HINTS[msg.platform] || PLATFORM_FORMAT_HINTS.slack;
-        const inlinePrompt = `${OVE_PERSONA}\n\nAvailable repos: ${repoList}\n\nThe user has access to ${repoNames.length} repos. Based on their message, determine which repo(s) they mean and answer their question fully. Use \`gh\` CLI to query GitHub (e.g. \`gh pr list --repo owner/repo\`, \`gh issue list --repo owner/repo\`). Do NOT stop after identifying the repo — complete the actual task.\n\n${formatHint}\n\n${parsed.rawText}`;
+        const historyBlock = history.length > 1
+          ? "Previous conversation:\n" +
+            history.slice(0, -1).map((m) => `${m.role}: ${m.content}`).join("\n") +
+            "\n\nCurrent request:\n"
+          : "";
+        const inlinePrompt = `${OVE_PERSONA}\n\nAvailable repos: ${repoList}\n\nThe user has access to ${repoNames.length} repos. Based on their message, determine which repo(s) they mean and answer their question fully. Use \`gh\` CLI to query GitHub (e.g. \`gh pr list --repo owner/repo\`, \`gh issue list --repo owner/repo\`). Do NOT stop after identifying the repo — complete the actual task.\n\n${formatHint}\n\n${historyBlock}${parsed.rawText}`;
 
         await msg.updateStatus("Working...");
         try {
@@ -442,6 +488,7 @@ export function createMessageHandler(deps: HandlerDeps): (msg: IncomingMessage) 
       "help": () => handleHelp(msg, deps),
       "list-tasks": () => handleListTasks(msg, deps),
       "cancel-task": () => handleCancelTask(msg, parsed.args, deps),
+      "trace": () => handleTrace(msg, parsed.args, deps),
       "list-schedules": () => handleListSchedules(msg, deps),
       "remove-schedule": () => handleRemoveSchedule(msg, parsed.args, deps),
       "schedule": () => handleSchedule(msg, parsed.repo, deps),

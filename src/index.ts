@@ -18,6 +18,7 @@ import type { AgentRunner, RunOptions } from "./runner";
 import { logger } from "./logger";
 import { RepoRegistry, syncGitHub } from "./repo-registry";
 import { SessionStore } from "./sessions";
+import { TraceStore } from "./trace";
 import { startCronLoop } from "./cron";
 import { ScheduleStore } from "./schedules";
 import { createMessageHandler, createEventHandler } from "./handlers";
@@ -30,6 +31,7 @@ db.run("PRAGMA journal_mode = WAL");
 const queue = new TaskQueue(db);
 const repos = new RepoManager(config.reposDir);
 const sessions = new SessionStore(db);
+const trace = new TraceStore(db);
 const schedules = new ScheduleStore(db);
 const repoRegistry = new RepoRegistry(db);
 
@@ -113,8 +115,11 @@ if (process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN) {
 }
 
 if (process.env.WHATSAPP_ENABLED === "true") {
+  const allowedChats = process.env.WHATSAPP_ALLOWED_CHATS
+    ?.split(",").map((s) => s.trim()).filter(Boolean);
   adapters.push(new WhatsAppAdapter({
     phoneNumber: process.env.WHATSAPP_PHONE,
+    allowedChats,
   }));
 }
 
@@ -132,7 +137,9 @@ const eventAdapters: EventAdapter[] = [];
 if (process.env.HTTP_API_PORT) {
   const httpAdapter = new HttpApiAdapter(
     parseInt(process.env.HTTP_API_PORT),
-    process.env.HTTP_API_KEY || crypto.randomUUID()
+    process.env.HTTP_API_KEY || crypto.randomUUID(),
+    trace,
+    queue
   );
   eventAdapters.push(httpAdapter);
 }
@@ -152,12 +159,14 @@ if (process.env.CLI_MODE === "true" || (adapters.length === 0 && eventAdapters.l
 
 // Main
 async function main() {
+  // Capture stale tasks before resetting so we can notify users
+  const staleTasks = queue.listActive().filter((t) => t.status === "running");
   const staleCount = queue.resetStale();
   if (staleCount > 0) {
     logger.info("reset stale tasks", { count: staleCount });
   }
 
-  logger.info("ove starting", { chatAdapters: adapters.length, eventAdapters: eventAdapters.length, runner: config.runner?.name || "claude" });
+  logger.info("ove starting", { chatAdapters: adapters.length, eventAdapters: eventAdapters.length, runner: config.runner?.name || "claude", tracing: trace.isEnabled() });
 
   startGitHubSync().catch((err) =>
     logger.warn("initial github sync failed", { error: String(err) })
@@ -169,6 +178,7 @@ async function main() {
     sessions,
     schedules,
     repoRegistry,
+    trace,
     pendingReplies,
     pendingEventReplies,
     runningProcesses,
@@ -183,6 +193,7 @@ async function main() {
     sessions,
     schedules,
     repoRegistry,
+    trace,
     pendingReplies,
     pendingEventReplies,
     runningProcesses,
@@ -215,6 +226,7 @@ async function main() {
         userId: cronTask.userId,
         repo: cronTask.repo,
         prompt: buildCronPrompt(cronTask.prompt),
+        taskType: "cron",
       });
     }
   );
@@ -225,14 +237,29 @@ async function main() {
     queue,
     repos,
     sessions,
+    adapters,
     pendingReplies,
     pendingEventReplies,
     runningProcesses,
     getRunnerForRepo,
     getRunnerOptsForRepo,
     getRepoInfo,
+    trace,
   });
   worker.start();
+
+  // Notify users whose tasks were interrupted by restart
+  if (staleTasks.length > 0) {
+    for (const task of staleTasks) {
+      const platform = task.userId.split(":")[0];
+      const adapter = adapters.find((a) => a.constructor.name.toLowerCase().includes(platform));
+      if (adapter?.sendToUser) {
+        adapter.sendToUser(task.userId, `Your task was interrupted by a restart: "${task.prompt.slice(0, 100)}". Please re-submit if needed.`).catch((err) =>
+          logger.warn("failed to notify user of interrupted task", { userId: task.userId, error: String(err) })
+        );
+      }
+    }
+  }
 
   logger.info("ove ready");
 

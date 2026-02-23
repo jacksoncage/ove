@@ -855,8 +855,9 @@ sudo systemctl enable --now ove</pre>
 
     <h3>WhatsApp</h3>
     <ol class="steps">
-      <li>Set <code>WHATSAPP_ENABLED=true</code> in <code>.env</code></li>
-      <li>Scan the QR code printed in the terminal on first start</li>
+      <li>Set <code>WHATSAPP_ENABLED=true</code> and <code>WHATSAPP_PHONE=&lt;your-number&gt;</code> in <code>.env</code></li>
+      <li>Start Ove and enter the pairing code on your phone (WhatsApp &rarr; Linked Devices &rarr; Link a Device)</li>
+      <li>Set <code>WHATSAPP_ALLOWED_CHATS=&lt;phone1&gt;,&lt;phone2&gt;</code> to limit which chats Ove listens to. Without this, Ove responds to <strong>all</strong> your outgoing messages in every chat. Use phone numbers (e.g. <code>46701234567</code>) for individual chats or full JIDs (e.g. <code>120363xxx@g.us</code>) for groups.</li>
     </ol>
   </section>
 

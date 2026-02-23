@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ove — Trace Viewer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #1a1a1a;
+      --bg-panel: #161616;
+      --bg-item: #1e1e1e;
+      --bg-item-hover: #252525;
+      --bg-item-active: #2a2a2a;
+      --border: #2a2a2a;
+      --border-light: #333;
+      --text: #e0e0e0;
+      --text-dim: #777;
+      --text-muted: #555;
+      --accent: #8ab4f8;
+
+      --green: #4ade80;
+      --green-dim: #16361f;
+      --blue: #60a5fa;
+      --blue-dim: #152540;
+      --gray: #888;
+      --gray-dim: #222;
+      --white: #e0e0e0;
+      --red: #f28b82;
+      --red-dim: #3b1a1a;
+      --amber: #fbbf24;
+      --amber-dim: #3b2e0a;
+      --cyan: #22d3ee;
+      --cyan-dim: #0a2e33;
+    }
+
+    body {
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-panel);
+      flex-shrink: 0;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .header-left h1 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+    }
+
+    .header-left h1 span { color: var(--text); }
+
+    .nav-link {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      transition: all 0.15s;
+    }
+    .nav-link:hover { color: var(--text); border-color: var(--border-light); }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle-wrap input { display: none; }
+
+    .toggle-track {
+      width: 28px;
+      height: 14px;
+      background: var(--border);
+      border-radius: 7px;
+      position: relative;
+      transition: background 0.2s;
+    }
+
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 10px;
+      height: 10px;
+      background: var(--text-dim);
+      border-radius: 50%;
+      transition: all 0.2s;
+    }
+
+    .toggle-wrap input:checked + .toggle-track {
+      background: var(--green-dim);
+    }
+
+    .toggle-wrap input:checked + .toggle-track::after {
+      left: 16px;
+      background: var(--green);
+    }
+
+    .filter-select {
+      background: var(--bg-item);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.7rem;
+      padding: 0.2rem 0.4rem;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .filter-select:focus { outline: 1px solid var(--accent); }
+
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Left panel: task list ── */
+    .task-panel {
+      width: 340px;
+      min-width: 260px;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-panel);
+      flex-shrink: 0;
+    }
+
+    .task-panel-header {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .task-count {
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .task-list {
+      flex: 1;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .task-item {
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.1s;
+      position: relative;
+    }
+
+    .task-item:hover { background: var(--bg-item-hover); }
+    .task-item.active { background: var(--bg-item-active); }
+
+    .task-item.active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--accent);
+    }
+
+    .task-row-top {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.3rem;
+    }
+
+    .badge {
+      font-size: 0.6rem;
+      padding: 0.1rem 0.35rem;
+      border-radius: 2px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .badge-pending   { background: var(--amber-dim); color: var(--amber); }
+    .badge-running   { background: var(--cyan-dim); color: var(--cyan); animation: pulse 2s infinite; }
+    .badge-completed { background: var(--green-dim); color: var(--green); }
+    .badge-failed    { background: var(--red-dim); color: var(--red); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    .task-repo {
+      font-size: 0.7rem;
+      color: var(--accent);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .task-time {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      margin-left: auto;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .task-prompt {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.4;
+    }
+
+    /* ── Right panel ── */
+    .trace-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .trace-header {
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .trace-task-id {
+      color: var(--text-dim);
+      font-size: 0.65rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .copy-btn {
+      background: var(--bg-item);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-family: inherit;
+      font-size: 0.6rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: all 0.15s;
+      margin-left: 0.5rem;
+    }
+    .copy-btn:hover { color: var(--text); border-color: var(--border-light); }
+    .copy-btn.copied { color: var(--green); border-color: var(--green-dim); }
+
+    /* ── Task context card ── */
+    .task-context {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-panel);
+      flex-shrink: 0;
+    }
+
+    .task-context-row {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 0.4rem;
+      align-items: baseline;
+    }
+
+    .task-context-row:last-child { margin-bottom: 0; }
+
+    .ctx-label {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      width: 3.5rem;
+      flex-shrink: 0;
+    }
+
+    .ctx-value {
+      font-size: 0.7rem;
+      color: var(--text);
+      line-height: 1.4;
+      min-width: 0;
+    }
+
+    .ctx-value.dim { color: var(--text-dim); }
+
+    .ctx-prompt {
+      font-size: 0.7rem;
+      color: var(--text);
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 6rem;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .ctx-result {
+      font-size: 0.65rem;
+      color: var(--text-dim);
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 4rem;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .ctx-meta {
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .ctx-meta-item {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+    }
+
+    .ctx-meta-item span { color: var(--text-dim); }
+
+    /* ── Trace timeline ── */
+    #traceContent {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .trace-empty {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+
+    .trace-timeline {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.5rem 0;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .trace-event {
+      display: flex;
+      padding: 0.35rem 1rem;
+      gap: 0.75rem;
+      position: relative;
+      transition: background 0.1s;
+    }
+
+    .trace-event:hover { background: var(--bg-item-hover); }
+
+    .trace-event::before {
+      content: '';
+      position: absolute;
+      left: 2.05rem;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      background: var(--border);
+    }
+
+    .trace-event:first-child::before { top: 50%; }
+    .trace-event:last-child::before { bottom: 50%; }
+    .trace-event:only-child::before { display: none; }
+
+    .trace-dot-col {
+      width: 12px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: 0.35rem;
+      flex-shrink: 0;
+      position: relative;
+      z-index: 1;
+    }
+
+    .trace-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .trace-dot.lifecycle { background: var(--green); box-shadow: 0 0 4px var(--green); }
+    .trace-dot.tool      { background: var(--blue); box-shadow: 0 0 4px var(--blue); }
+    .trace-dot.status    { background: var(--gray); }
+    .trace-dot.output    { background: var(--white); }
+    .trace-dot.error     { background: var(--red); box-shadow: 0 0 4px var(--red); }
+
+    .trace-ts {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      width: 5.5rem;
+      flex-shrink: 0;
+      padding-top: 0.15rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .trace-body { flex: 1; min-width: 0; }
+
+    .trace-kind {
+      font-size: 0.55rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.15rem;
+      font-weight: 600;
+    }
+
+    .trace-kind.lifecycle { color: var(--green); }
+    .trace-kind.tool      { color: var(--blue); }
+    .trace-kind.status    { color: var(--gray); }
+    .trace-kind.output    { color: var(--white); }
+    .trace-kind.error     { color: var(--red); }
+
+    .trace-summary {
+      font-size: 0.75rem;
+      color: var(--text);
+      line-height: 1.4;
+      word-break: break-word;
+    }
+
+    .trace-detail {
+      font-size: 0.65rem;
+      color: var(--text-dim);
+      line-height: 1.4;
+      margin-top: 0.25rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.2s ease;
+    }
+
+    .trace-event.expanded .trace-detail { max-height: 40rem; }
+
+    .trace-detail-toggle {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      margin-top: 0.2rem;
+      display: inline-block;
+    }
+    .trace-detail-toggle:hover { color: var(--text-dim); }
+
+    .loading {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 1rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .spinner {
+      width: 12px;
+      height: 12px;
+      border: 1.5px solid var(--border);
+      border-top-color: var(--text-dim);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1><span>ove</span> trace</h1>
+      <a href="/" class="nav-link">chat</a>
+    </div>
+    <div class="header-right">
+      <select class="filter-select" id="repoFilter">
+        <option value="">all repos</option>
+      </select>
+      <select class="filter-select" id="userFilter">
+        <option value="">all users</option>
+      </select>
+      <select class="filter-select" id="statusFilter">
+        <option value="">all statuses</option>
+        <option value="running">running</option>
+        <option value="pending">pending</option>
+        <option value="completed">completed</option>
+        <option value="failed">failed</option>
+      </select>
+      <label class="toggle-wrap">
+        <input type="checkbox" id="autoRefresh" />
+        <div class="toggle-track"></div>
+        auto-refresh
+      </label>
+    </div>
+  </header>
+
+  <div class="layout">
+    <div class="task-panel">
+      <div class="task-panel-header">
+        <span>Tasks</span>
+        <span class="task-count" id="taskCount"></span>
+      </div>
+      <div class="task-list" id="taskList"></div>
+    </div>
+
+    <div class="trace-panel">
+      <div class="trace-header">
+        <span>Trace Timeline</span>
+        <span>
+          <span class="trace-task-id" id="traceTaskId"></span>
+          <button class="copy-btn" id="expandAllBtn" style="display:none">show all details</button>
+          <button class="copy-btn" id="copyTraceBtn" style="display:none">copy json</button>
+        </span>
+      </div>
+      <div id="taskContext"></div>
+      <div id="traceContent">
+        <div class="trace-empty">Select a task to view its trace</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var API_KEY = localStorage.getItem("ove-api-key") || prompt("API Key:");
+    if (API_KEY) localStorage.setItem("ove-api-key", API_KEY);
+
+    var taskListEl = document.getElementById("taskList");
+    var taskCountEl = document.getElementById("taskCount");
+    var taskContextEl = document.getElementById("taskContext");
+    var traceContentEl = document.getElementById("traceContent");
+    var traceTaskIdEl = document.getElementById("traceTaskId");
+    var repoFilterEl = document.getElementById("repoFilter");
+    var userFilterEl = document.getElementById("userFilter");
+    var statusFilterEl = document.getElementById("statusFilter");
+    var autoRefreshEl = document.getElementById("autoRefresh");
+    var copyTraceBtnEl = document.getElementById("copyTraceBtn");
+    var expandAllBtnEl = document.getElementById("expandAllBtn");
+
+    var selectedTaskId = null;
+    var allTasks = [];
+    var lastTraceEvents = null;
+    var refreshTimer = null;
+
+    function apiHeaders() {
+      return { "X-API-Key": API_KEY };
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return "";
+      var d = new Date(iso);
+      var diffMins = Math.floor((Date.now() - d.getTime()) / 60000);
+      if (diffMins < 1) return "just now";
+      if (diffMins < 60) return diffMins + "m ago";
+      var diffHrs = Math.floor(diffMins / 60);
+      if (diffHrs < 24) return diffHrs + "h ago";
+      return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    }
+
+    function fmtTimeFull(iso) {
+      if (!iso) return "";
+      var d = new Date(iso);
+      return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    }
+
+    function fmtTraceTime(iso) {
+      if (!iso) return "";
+      var d = new Date(iso);
+      return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+        + "." + String(d.getMilliseconds()).padStart(3, "0");
+    }
+
+    function truncate(s, n) {
+      if (!s) return "";
+      return s.length > n ? s.slice(0, n) + "..." : s;
+    }
+
+    function el(tag, cls, textContent) {
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (textContent != null) e.textContent = textContent;
+      return e;
+    }
+
+    function clear(node) {
+      while (node.firstChild) node.removeChild(node.firstChild);
+    }
+
+    function getFilteredTasks() {
+      var repo = repoFilterEl.value;
+      var user = userFilterEl.value;
+      return allTasks.filter(function (t) {
+        if (repo && t.repo !== repo) return false;
+        if (user && t.userId !== user) return false;
+        return true;
+      });
+    }
+
+    function populateFilterOptions() {
+      var repos = [];
+      var users = [];
+      var repoSet = {};
+      var userSet = {};
+      for (var i = 0; i < allTasks.length; i++) {
+        var t = allTasks[i];
+        if (!repoSet[t.repo]) { repoSet[t.repo] = true; repos.push(t.repo); }
+        if (t.userId && !userSet[t.userId]) { userSet[t.userId] = true; users.push(t.userId); }
+      }
+
+      var prevRepo = repoFilterEl.value;
+      var prevUser = userFilterEl.value;
+
+      clear(repoFilterEl);
+      repoFilterEl.appendChild(el("option", null, "all repos"));
+      repoFilterEl.firstChild.value = "";
+      for (var i = 0; i < repos.length; i++) {
+        var opt = el("option", null, repos[i]);
+        opt.value = repos[i];
+        repoFilterEl.appendChild(opt);
+      }
+      repoFilterEl.value = prevRepo;
+
+      clear(userFilterEl);
+      userFilterEl.appendChild(el("option", null, "all users"));
+      userFilterEl.firstChild.value = "";
+      for (var i = 0; i < users.length; i++) {
+        var opt = el("option", null, users[i]);
+        opt.value = users[i];
+        userFilterEl.appendChild(opt);
+      }
+      userFilterEl.value = prevUser;
+    }
+
+    async function fetchTasks() {
+      var status = statusFilterEl.value;
+      var params = new URLSearchParams({ key: API_KEY, limit: "100" });
+      if (status) params.set("status", status);
+      try {
+        var res = await fetch("/api/tasks?" + params, { headers: apiHeaders() });
+        if (!res.ok) return;
+        allTasks = await res.json();
+        populateFilterOptions();
+        renderTasks();
+      } catch (e) {
+        console.error("Failed to fetch tasks:", e);
+      }
+    }
+
+    function renderTasks() {
+      var tasks = getFilteredTasks();
+      taskCountEl.textContent = String(tasks.length);
+      var scrollTop = taskListEl.scrollTop;
+
+      clear(taskListEl);
+
+      if (tasks.length === 0) {
+        taskListEl.appendChild(el("div", "loading", "No tasks found"));
+        return;
+      }
+
+      for (var i = 0; i < tasks.length; i++) {
+        var task = tasks[i];
+        var item = el("div", "task-item" + (task.id === selectedTaskId ? " active" : ""));
+
+        var rowTop = el("div", "task-row-top");
+        rowTop.appendChild(el("span", "badge badge-" + task.status, task.status));
+        rowTop.appendChild(el("span", "task-repo", task.repo));
+        rowTop.appendChild(el("span", "task-time", fmtTime(task.createdAt)));
+        item.appendChild(rowTop);
+
+        item.appendChild(el("div", "task-prompt", truncate(task.prompt, 120)));
+
+        (function (id) {
+          item.addEventListener("click", function () { selectTask(id); });
+        })(task.id);
+        taskListEl.appendChild(item);
+      }
+
+      taskListEl.scrollTop = scrollTop;
+    }
+
+    function renderTaskContext(task) {
+      clear(taskContextEl);
+      if (!task) return;
+
+      var ctx = el("div", "task-context");
+
+      // Meta row: user, repo, status, timestamps
+      var meta = el("div", "ctx-meta");
+      var items = [
+        ["user", task.userId],
+        ["repo", task.repo],
+        ["status", task.status],
+        ["created", fmtTimeFull(task.createdAt)],
+      ];
+      if (task.completedAt) {
+        items.push(["done", fmtTimeFull(task.completedAt)]);
+        var ms = new Date(task.completedAt).getTime() - new Date(task.createdAt).getTime();
+        var secs = Math.floor(ms / 1000);
+        var duration;
+        if (secs < 60) { duration = secs + "s"; }
+        else if (secs < 3600) { duration = Math.floor(secs / 60) + "m " + (secs % 60) + "s"; }
+        else { duration = Math.floor(secs / 3600) + "h " + Math.floor((secs % 3600) / 60) + "m"; }
+        items.push(["duration", duration]);
+      }
+
+      for (var i = 0; i < items.length; i++) {
+        var mi = el("div", "ctx-meta-item");
+        mi.appendChild(document.createTextNode(items[i][0] + " "));
+        mi.appendChild(el("span", null, items[i][1]));
+        meta.appendChild(mi);
+      }
+      ctx.appendChild(meta);
+
+      // Prompt
+      var promptRow = el("div", "task-context-row");
+      promptRow.style.marginTop = "0.5rem";
+      promptRow.appendChild(el("div", "ctx-label", "prompt"));
+      promptRow.appendChild(el("div", "ctx-prompt", task.prompt));
+      ctx.appendChild(promptRow);
+
+      // Result (if available)
+      if (task.result) {
+        var resultRow = el("div", "task-context-row");
+        resultRow.appendChild(el("div", "ctx-label", "result"));
+        resultRow.appendChild(el("div", "ctx-result", task.result));
+        ctx.appendChild(resultRow);
+      }
+
+      taskContextEl.appendChild(ctx);
+    }
+
+    async function selectTask(taskId) {
+      selectedTaskId = taskId;
+      renderTasks();
+      traceTaskIdEl.textContent = taskId.slice(0, 8) + "...";
+
+      // Show task context
+      var task = allTasks.find(function (t) { return t.id === taskId; });
+      renderTaskContext(task || null);
+      lastTraceEvents = null;
+      copyTraceBtnEl.style.display = "none";
+      expandAllBtnEl.style.display = "none";
+
+      var loadingDiv = el("div", "loading");
+      loadingDiv.appendChild(el("div", "spinner"));
+      loadingDiv.appendChild(document.createTextNode("Loading trace..."));
+      clear(traceContentEl);
+      traceContentEl.appendChild(loadingDiv);
+
+      try {
+        var res = await fetch("/api/trace/" + encodeURIComponent(taskId) + "?key=" + encodeURIComponent(API_KEY), { headers: apiHeaders() });
+        if (!res.ok) {
+          clear(traceContentEl);
+          traceContentEl.appendChild(el("div", "trace-empty", "Failed to load trace"));
+          return;
+        }
+        var events = await res.json();
+        lastTraceEvents = { task: task || { id: taskId }, events: events };
+        var hasEvents = events.length > 0;
+        var hasDetails = hasEvents && events.some(function (e) { return !!e.detail; });
+        copyTraceBtnEl.style.display = hasEvents ? "inline-block" : "none";
+        expandAllBtnEl.style.display = hasDetails ? "inline-block" : "none";
+        expandAllBtnEl.textContent = "show all details";
+        renderTrace(events);
+      } catch (e) {
+        clear(traceContentEl);
+        traceContentEl.appendChild(el("div", "trace-empty", "Error: " + e.message));
+      }
+    }
+
+    function renderTrace(events) {
+      clear(traceContentEl);
+
+      if (events.length === 0) {
+        traceContentEl.appendChild(el("div", "trace-empty", "No trace events recorded for this task"));
+        return;
+      }
+
+      var timeline = el("div", "trace-timeline");
+
+      for (var i = 0; i < events.length; i++) {
+        var ev = events[i];
+        var row = el("div", "trace-event");
+
+        var dotCol = el("div", "trace-dot-col");
+        dotCol.appendChild(el("div", "trace-dot " + ev.kind));
+        row.appendChild(dotCol);
+
+        row.appendChild(el("div", "trace-ts", fmtTraceTime(ev.ts)));
+
+        var body = el("div", "trace-body");
+        body.appendChild(el("div", "trace-kind " + ev.kind, ev.kind));
+        body.appendChild(el("div", "trace-summary", ev.summary));
+
+        if (ev.detail) {
+          body.appendChild(el("div", "trace-detail", ev.detail));
+          (function (r) {
+            var toggle = el("span", "trace-detail-toggle", "show detail");
+            toggle.addEventListener("click", function () {
+              r.classList.toggle("expanded");
+              toggle.textContent = r.classList.contains("expanded") ? "hide detail" : "show detail";
+            });
+            body.appendChild(toggle);
+          })(row);
+        }
+
+        row.appendChild(body);
+        timeline.appendChild(row);
+      }
+
+      traceContentEl.appendChild(timeline);
+    }
+
+    // Auto-refresh
+    autoRefreshEl.addEventListener("change", function () {
+      if (autoRefreshEl.checked) {
+        refreshTimer = setInterval(async function () {
+          await fetchTasks();
+          if (selectedTaskId) {
+            var task = allTasks.find(function (t) { return t.id === selectedTaskId; });
+            if (task && (task.status === "running" || task.status === "pending")) {
+              await selectTask(selectedTaskId);
+            }
+          }
+        }, 3000);
+      } else {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+      }
+    });
+
+    statusFilterEl.addEventListener("change", fetchTasks);
+    repoFilterEl.addEventListener("change", renderTasks);
+    userFilterEl.addEventListener("change", renderTasks);
+
+    expandAllBtnEl.addEventListener("click", function () {
+      var timeline = traceContentEl.querySelector(".trace-timeline");
+      if (!timeline) return;
+      var events = timeline.querySelectorAll(".trace-event");
+      var allExpanded = expandAllBtnEl.textContent === "hide all details";
+      for (var i = 0; i < events.length; i++) {
+        var toggle = events[i].querySelector(".trace-detail-toggle");
+        if (!toggle) continue;
+        if (allExpanded) {
+          events[i].classList.remove("expanded");
+          toggle.textContent = "show detail";
+        } else {
+          events[i].classList.add("expanded");
+          toggle.textContent = "hide detail";
+        }
+      }
+      expandAllBtnEl.textContent = allExpanded ? "show all details" : "hide all details";
+    });
+
+    copyTraceBtnEl.addEventListener("click", function () {
+      if (!lastTraceEvents) return;
+      var json = JSON.stringify(lastTraceEvents, null, 2);
+      navigator.clipboard.writeText(json).then(function () {
+        copyTraceBtnEl.textContent = "copied!";
+        copyTraceBtnEl.classList.add("copied");
+        setTimeout(function () {
+          copyTraceBtnEl.textContent = "copy json";
+          copyTraceBtnEl.classList.remove("copied");
+        }, 1500);
+      });
+    });
+
+    fetchTasks();
+  </script>
+</body>
+</html>
