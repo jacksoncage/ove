@@ -601,6 +601,30 @@
       return { "X-API-Key": API_KEY };
     }
 
+    // ── URL state management ──
+    function readUrlState() {
+      var params = new URLSearchParams(window.location.search);
+      return {
+        task: params.get("task"),
+        repo: params.get("repo") || "",
+        user: params.get("user") || "",
+        status: params.get("status") || "",
+      };
+    }
+
+    function pushUrlState() {
+      var params = new URLSearchParams();
+      if (selectedTaskId) params.set("task", selectedTaskId);
+      if (repoFilterEl.value) params.set("repo", repoFilterEl.value);
+      if (userFilterEl.value) params.set("user", userFilterEl.value);
+      if (statusFilterEl.value) params.set("status", statusFilterEl.value);
+      var qs = params.toString();
+      var url = window.location.pathname + (qs ? "?" + qs : "");
+      if (url !== window.location.pathname + window.location.search) {
+        history.replaceState(null, "", url);
+      }
+    }
+
     function fmtTime(iso) {
       if (!iso) return "";
       var d = new Date(iso);
@@ -787,11 +811,13 @@
 
     async function selectTask(taskId) {
       selectedTaskId = taskId;
+      pushUrlState();
       renderTasks();
       traceTaskIdEl.textContent = taskId.slice(0, 8) + "...";
 
       // Show task context
       var task = allTasks.find(function (t) { return t.id === taskId; });
+      lastSelectedStatus = task ? task.status : null;
       renderTaskContext(task || null);
       lastTraceEvents = null;
       copyTraceBtnEl.style.display = "none";
@@ -868,14 +894,21 @@
     }
 
     // Auto-refresh
+    var lastSelectedStatus = null;
     autoRefreshEl.addEventListener("change", function () {
       if (autoRefreshEl.checked) {
         refreshTimer = setInterval(async function () {
           await fetchTasks();
           if (selectedTaskId) {
             var task = allTasks.find(function (t) { return t.id === selectedTaskId; });
-            if (task && (task.status === "running" || task.status === "pending")) {
-              await selectTask(selectedTaskId);
+            if (task) {
+              var wasActive = lastSelectedStatus === "running" || lastSelectedStatus === "pending";
+              var justFinished = wasActive && (task.status === "completed" || task.status === "failed");
+              var stillActive = task.status === "running" || task.status === "pending";
+              if (stillActive || justFinished) {
+                await selectTask(selectedTaskId);
+              }
+              lastSelectedStatus = task.status;
             }
           }
         }, 3000);
@@ -885,9 +918,9 @@
       }
     });
 
-    statusFilterEl.addEventListener("change", fetchTasks);
-    repoFilterEl.addEventListener("change", renderTasks);
-    userFilterEl.addEventListener("change", renderTasks);
+    statusFilterEl.addEventListener("change", function () { fetchTasks(); pushUrlState(); });
+    repoFilterEl.addEventListener("change", function () { renderTasks(); pushUrlState(); });
+    userFilterEl.addEventListener("change", function () { renderTasks(); pushUrlState(); });
 
     expandAllBtnEl.addEventListener("click", function () {
       var timeline = traceContentEl.querySelector(".trace-timeline");
@@ -921,7 +954,18 @@
       });
     });
 
-    fetchTasks();
+    // ── Init: restore state from URL ──
+    (async function init() {
+      var state = readUrlState();
+      statusFilterEl.value = state.status;
+      await fetchTasks();
+      if (state.repo) repoFilterEl.value = state.repo;
+      if (state.user) userFilterEl.value = state.user;
+      if (state.repo || state.user) renderTasks();
+      if (state.task) {
+        await selectTask(state.task);
+      }
+    })();
   </script>
 </body>
 </html>
