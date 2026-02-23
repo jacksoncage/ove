@@ -146,6 +146,8 @@ export function buildCronPrompt(prompt: string): string {
   return `This is an autonomous scheduled task. Do not ask questions — make your own decisions and proceed with the work. If there are multiple options, pick the best one and go.\n\n${prompt}`;
 }
 
+const NON_INTERACTIVE_HINT = "You are running non-interactively in a chat pipeline. Do NOT use AskUserQuestion or any interactive tools. If you need to ask the user something, include the question and numbered options directly in your text response.";
+
 export function buildContextualPrompt(
   parsed: ParsedMessage,
   history: { role: string; content: string }[],
@@ -156,7 +158,7 @@ export function buildContextualPrompt(
       history.slice(0, -1).map((m) => `${m.role}: ${m.content}`).join("\n") +
       "\n\nCurrent request:\n"
     : "";
-  return persona + "\n\n" + contextPrefix + buildPrompt(parsed);
+  return persona + "\n\n" + NON_INTERACTIVE_HINT + "\n\n" + contextPrefix + buildPrompt(parsed);
 }
 
 export function buildPrompt(parsed: ParsedMessage): string {

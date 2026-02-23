@@ -50,7 +50,7 @@ export class ClaudeRunner implements AgentRunner {
 
   buildArgs(prompt: string, opts: RunOptions): string[] {
     // stream-json requires --verbose in claude CLI
-    const args = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--max-turns", String(opts.maxTurns), "--dangerously-skip-permissions"];
+    const args = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--max-turns", String(opts.maxTurns), "--dangerously-skip-permissions", "--disallowed-tools", "AskUserQuestion"];
     if (opts.mcpConfigPath) args.push("--mcp-config", opts.mcpConfigPath);
     return args;
   }
