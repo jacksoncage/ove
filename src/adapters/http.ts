@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { join, extname } from "node:path";
 import type { EventAdapter, IncomingEvent, IncomingMessage } from "./types";
 import type { TraceStore } from "../trace";
 import type { TaskQueue } from "../queue";
@@ -25,6 +25,7 @@ export class HttpApiAdapter implements EventAdapter {
   private chats = new Map<string, PendingChat>();
   private webUiHtml: string;
   private traceUiHtml: string;
+  private publicDir: string;
 
   constructor(port: number, apiKey: string, trace: TraceStore, queue?: TaskQueue, sessions?: SessionStore) {
     this.port = port;
@@ -33,6 +34,7 @@ export class HttpApiAdapter implements EventAdapter {
     this.queue = queue || null;
     this.sessions = sessions || null;
     const publicDir = join(import.meta.dir, "../../public");
+    this.publicDir = publicDir;
     try {
       this.webUiHtml = readFileSync(join(publicDir, "index.html"), "utf-8");
     } catch {
@@ -229,6 +231,17 @@ export class HttpApiAdapter implements EventAdapter {
           const limit = Math.min(parseInt(url.searchParams.get("limit") || "50") || 50, 200);
           const history = self.sessions.getHistory(userId, limit);
           return Response.json(history);
+        }
+
+        // Static files from public/
+        const MIME: Record<string, string> = { ".png": "image/png", ".ico": "image/x-icon", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".css": "text/css", ".js": "application/javascript" };
+        const ext = extname(path);
+        if (ext && MIME[ext]) {
+          const filePath = join(self.publicDir, path);
+          if (existsSync(filePath)) {
+            const data = readFileSync(filePath);
+            return new Response(data, { headers: { "Content-Type": MIME[ext], "Cache-Control": "public, max-age=3600" } });
+          }
         }
 
         return Response.json({ error: "Not found" }, { status: 404 });

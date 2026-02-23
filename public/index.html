@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Ove</title>
+  <link rel="icon" href="/favicon.ico">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -53,6 +54,13 @@
       display: flex;
       align-items: center;
       gap: 1rem;
+    }
+
+    .header-logo {
+      width: 24px;
+      height: 24px;
+      border-radius: 3px;
+      object-fit: cover;
     }
 
     .header-left h1 {
@@ -214,7 +222,9 @@
       line-height: 1.5;
     }
     .msg.user { color: var(--accent); }
-    .msg.ove { color: var(--text); }
+    .msg.ove { color: var(--text); display: flex; gap: 0.5rem; align-items: flex-start; }
+    .msg.ove .ove-avatar { width: 20px; height: 20px; border-radius: 3px; flex-shrink: 0; margin-top: 2px; }
+    .msg.ove .ove-text { flex: 1; }
     .msg.status { color: var(--text-muted); font-size: 0.75rem; }
     .msg.error { color: var(--red); }
     .msg.system {
@@ -269,6 +279,7 @@
 <body>
   <header>
     <div class="header-left">
+      <img src="/logo.png" class="header-logo" alt="Ove">
       <h1>ove</h1>
       <a href="/trace" class="nav-link">traces</a>
       <a href="https://github.com/jacksoncage/ove" target="_blank" class="nav-link">github</a>
@@ -346,7 +357,18 @@
 
     // ── Chat messages ──
     function addMsg(text, cls) {
-      var div = el("div", "msg " + cls, text);
+      var div = el("div", "msg " + cls);
+      if (cls === "ove") {
+        var img = document.createElement("img");
+        img.src = "/logo.png";
+        img.className = "ove-avatar";
+        img.alt = "Ove";
+        div.appendChild(img);
+        var span = el("span", "ove-text", text);
+        div.appendChild(span);
+      } else {
+        div.textContent = text;
+      }
       msgs.appendChild(div);
       msgs.scrollTop = msgs.scrollHeight;
       return div;
