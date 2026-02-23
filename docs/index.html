@@ -807,6 +807,43 @@ sudo systemctl enable --now ove</pre>
     </ol>
   </section>
 
+  <section class="section" id="skills">
+    <h2>Skills</h2>
+    <p class="section-note">Teach Ove's Claude instances your conventions. Manually.</p>
+
+    <p>Ove spawns <a href="https://code.claude.com/docs/en/skills">Claude Code CLI</a> in isolated worktrees. The spawned instances automatically pick up <strong>skills</strong> &mdash; reusable instruction sets that follow the <a href="https://agentskills.io">Agent Skills</a> open standard.</p>
+
+    <p>Skills are configured <strong>manually</strong> on the host machine running Ove:</p>
+
+    <dl class="cmd-grid">
+      <dt>~/.claude/skills/</dt>
+      <dd>Personal skills &mdash; available across all repos on this machine</dd>
+      <dt>.claude/skills/</dt>
+      <dd>Per-repo skills &mdash; committed to each repo Ove manages</dd>
+      <dt>Plugins</dt>
+      <dd>Installed via <code>claude plugins add</code> &mdash; available where enabled</dd>
+    </dl>
+
+    <p>When Ove runs a task, Claude Code picks up all three levels. Drop a <code>SKILL.md</code> with domain knowledge, coding conventions, review checklists, or deployment workflows &mdash; and every task on that repo benefits.</p>
+
+<pre data-label="example: .claude/skills/review/SKILL.md">---
+name: review
+description: Review code using our team standards
+---
+
+When reviewing code, check for:
+1. Error handling covers all failure modes
+2. Tests cover the happy path and at least one edge case
+3. No secrets or credentials in code</pre>
+
+    <p>See the <a href="https://code.claude.com/docs/en/skills">Claude Code skills docs</a> for frontmatter options, argument passing, subagent execution, and more.</p>
+
+    <div class="ove-says">
+      "Skills are just instructions in a file. Not magic. But they work."
+      <span class="attr">&mdash; Ove</span>
+    </div>
+  </section>
+
   <section class="section" id="transports">
     <h2>Transport Setup</h2>
     <p class="section-note">Enable what you need. Ove doesn't judge. Much.</p>

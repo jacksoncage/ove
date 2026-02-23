@@ -235,10 +235,44 @@ curl http://localhost:3000/api/tasks?key=<key>&limit=20&status=completed
 curl http://localhost:3000/api/trace/<task-id>?key=<key>
 ```
 
+## Skills
+
+Ove spawns Claude Code CLI (`claude -p`) in isolated worktrees. The spawned instances automatically pick up [skills](https://code.claude.com/docs/en/skills) — reusable instruction sets that follow the [Agent Skills](https://agentskills.io) open standard.
+
+Skills are configured **manually** on the host machine running Ove:
+
+| Level | Path | Scope |
+|-------|------|-------|
+| Personal | `~/.claude/skills/<name>/SKILL.md` | All repos on this machine |
+| Per-repo | `.claude/skills/<name>/SKILL.md` (committed to repo) | That repo only |
+| Plugins | Installed via `claude plugins add` | Where enabled |
+
+When Ove runs a task in a worktree, Claude Code picks up personal skills from `~/.claude/skills/`, project skills from the repo's `.claude/skills/`, and any enabled plugins. This means you can give the Claude instances domain-specific knowledge, coding conventions, deployment workflows, or review checklists — just by dropping a `SKILL.md` in the right place.
+
+Example: adding a review skill to a repo so Ove knows your team's review standards:
+
+```
+my-repo/.claude/skills/review/SKILL.md
+```
+
+```yaml
+---
+name: review
+description: Review code using our team standards
+---
+
+When reviewing code, check for:
+1. Error handling covers all failure modes
+2. Tests cover the happy path and at least one edge case
+3. No secrets or credentials in code
+```
+
+See the [Claude Code skills docs](https://code.claude.com/docs/en/skills) for the full reference on frontmatter options, argument passing, subagent execution, and more.
+
 ## Testing
 
 ```bash
-bun test    # 150 tests
+bun test    # 224 tests
 ```
 
 ## How It Works
