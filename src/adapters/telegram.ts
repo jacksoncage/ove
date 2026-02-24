@@ -1,5 +1,5 @@
 import { Bot } from "grammy";
-import type { ChatAdapter, IncomingMessage } from "./types";
+import type { ChatAdapter, IncomingMessage, AdapterStatus } from "./types";
 import { logger } from "../logger";
 import { debounce } from "./debounce";
 
@@ -24,6 +24,8 @@ function mdToHtml(text: string): string {
 export class TelegramAdapter implements ChatAdapter {
   private bot: Bot;
   private onMessage?: (msg: IncomingMessage) => void;
+  private started = false;
+  private startedAt?: string;
 
   constructor(token: string) {
     if (!token) throw new Error("Telegram bot token is required");
@@ -61,14 +63,12 @@ export class TelegramAdapter implements ChatAdapter {
         platform: "telegram",
         text,
         reply: async (replyText: string) => {
-          // Replace the status message with the first reply, then send new messages for the rest
+          // Delete status message and send a new one so the user gets a notification
           if (statusMsgId) {
             try {
-              await ctx.api.editMessageText(chatId, statusMsgId, mdToHtml(replyText), { parse_mode: "HTML" });
-              statusMsgId = undefined;
-              return;
+              await ctx.api.deleteMessage(chatId, statusMsgId);
             } catch (err) {
-              logger.warn("telegram reply edit failed, sending new message", { error: String(err) });
+              logger.debug("telegram status delete failed", { error: String(err) });
             }
             statusMsgId = undefined;
           }
@@ -82,10 +82,22 @@ export class TelegramAdapter implements ChatAdapter {
     });
 
     this.bot.start();
+    this.started = true;
+    this.startedAt = new Date().toISOString();
     logger.info("telegram adapter started");
   }
 
+  getStatus(): AdapterStatus {
+    return {
+      name: "telegram",
+      type: "chat",
+      status: this.started ? "connected" : "disconnected",
+      startedAt: this.startedAt,
+    };
+  }
+
   async stop(): Promise<void> {
+    this.started = false;
     this.bot.stop();
     logger.info("telegram adapter stopped");
   }

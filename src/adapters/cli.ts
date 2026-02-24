@@ -1,4 +1,4 @@
-import type { ChatAdapter, IncomingMessage } from "./types";
+import type { ChatAdapter, IncomingMessage, AdapterStatus } from "./types";
 import { createInterface } from "node:readline";
 
 const DIM = "\x1b[2m";
@@ -12,6 +12,8 @@ export class CliAdapter implements ChatAdapter {
   private userId: string;
   private statusLines: string[] = [];
   private statusLinesShown = 0;
+  private started = false;
+  private startedAt?: string;
 
   constructor(userId: string = "cli:local") {
     this.userId = userId;
@@ -41,6 +43,9 @@ export class CliAdapter implements ChatAdapter {
       output: process.stdout,
       prompt: "\nove> ",
     });
+
+    this.started = true;
+    this.startedAt = new Date().toISOString();
 
     console.log("\n--- Ove ---");
     console.log("Ja. What do you want? Type 'help' if you need it.\n");
@@ -87,7 +92,17 @@ export class CliAdapter implements ChatAdapter {
     });
   }
 
+  getStatus(): AdapterStatus {
+    return {
+      name: "cli",
+      type: "chat",
+      status: this.started ? "connected" : "disconnected",
+      startedAt: this.startedAt,
+    };
+  }
+
   async stop(): Promise<void> {
+    this.started = false;
     this.rl?.close();
   }
 }

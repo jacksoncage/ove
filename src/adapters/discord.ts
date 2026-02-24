@@ -1,5 +1,5 @@
 import { Client, GatewayIntentBits, type Message } from "discord.js";
-import type { ChatAdapter, IncomingMessage } from "./types";
+import type { ChatAdapter, IncomingMessage, AdapterStatus } from "./types";
 import { logger } from "../logger";
 import { debounce } from "./debounce";
 
@@ -7,6 +7,8 @@ export class DiscordAdapter implements ChatAdapter {
   private client: Client;
   private token: string;
   private onMessage?: (msg: IncomingMessage) => void;
+  private started = false;
+  private startedAt?: string;
 
   constructor(token: string) {
     if (!token) throw new Error("Discord bot token is required");
@@ -69,10 +71,22 @@ export class DiscordAdapter implements ChatAdapter {
     });
 
     await this.client.login(this.token);
+    this.started = true;
+    this.startedAt = new Date().toISOString();
     logger.info("discord adapter started");
   }
 
+  getStatus(): AdapterStatus {
+    return {
+      name: "discord",
+      type: "chat",
+      status: this.started ? "connected" : "disconnected",
+      startedAt: this.startedAt,
+    };
+  }
+
   async stop(): Promise<void> {
+    this.started = false;
     this.client.destroy();
     logger.info("discord adapter stopped");
   }

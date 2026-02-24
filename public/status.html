@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ove — Status</title>
+  <link rel="icon" href="/favicon.ico">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #1a1a1a;
+      --bg-panel: #161616;
+      --bg-item: #1e1e1e;
+      --bg-item-hover: #252525;
+      --border: #2a2a2a;
+      --border-light: #333;
+      --text: #e0e0e0;
+      --text-dim: #777;
+      --text-muted: #555;
+      --accent: #8ab4f8;
+      --green: #4ade80;
+      --green-dim: #16361f;
+      --red: #f28b82;
+      --red-dim: #3b1a1a;
+      --amber: #fbbf24;
+      --amber-dim: #3b2e0a;
+      --cyan: #22d3ee;
+      --cyan-dim: #0a2e33;
+    }
+
+    body {
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-panel);
+      flex-shrink: 0;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .header-logo {
+      width: 24px;
+      height: 24px;
+      border-radius: 3px;
+      object-fit: cover;
+    }
+
+    .header-left h1 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+    }
+
+    .header-left h1 span { color: var(--text); }
+
+    .nav-link {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      transition: all 0.15s;
+    }
+    .nav-link:hover { color: var(--text); border-color: var(--border-light); }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle-wrap input { display: none; }
+
+    .toggle-track {
+      width: 28px;
+      height: 14px;
+      background: var(--border);
+      border-radius: 7px;
+      position: relative;
+      transition: background 0.2s;
+    }
+
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 10px;
+      height: 10px;
+      background: var(--text-dim);
+      border-radius: 50%;
+      transition: all 0.2s;
+    }
+
+    .toggle-wrap input:checked + .toggle-track {
+      background: var(--green-dim);
+    }
+
+    .toggle-wrap input:checked + .toggle-track::after {
+      left: 16px;
+      background: var(--green);
+    }
+
+    .last-updated {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Content ── */
+    .content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .section-header {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .section-header::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Adapter cards ── */
+    .adapter-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .adapter-card {
+      background: var(--bg-item);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.75rem;
+      transition: border-color 0.15s;
+    }
+
+    .adapter-card:hover { border-color: var(--border-light); }
+
+    .adapter-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.4rem;
+    }
+
+    .adapter-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .adapter-type {
+      font-size: 0.55rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .badge {
+      font-size: 0.55rem;
+      padding: 0.1rem 0.35rem;
+      border-radius: 2px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .badge-connected   { background: var(--green-dim); color: var(--green); }
+    .badge-disconnected { background: var(--red-dim); color: var(--red); }
+    .badge-degraded     { background: var(--amber-dim); color: var(--amber); }
+    .badge-unknown      { background: #222; color: var(--text-muted); }
+
+    .adapter-error {
+      font-size: 0.65rem;
+      color: var(--red);
+      margin-top: 0.3rem;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+
+    .adapter-details {
+      margin-top: 0.3rem;
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .adapter-details span { color: var(--text-dim); }
+
+    .adapter-started {
+      font-size: 0.55rem;
+      color: var(--text-muted);
+      margin-top: 0.3rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Queue stats ── */
+    .queue-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .queue-card {
+      background: var(--bg-item);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.6rem 0.75rem;
+      text-align: center;
+    }
+
+    .queue-count {
+      font-size: 1.4rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.2;
+    }
+
+    .queue-count.pending  { color: var(--amber); }
+    .queue-count.running  { color: var(--cyan); }
+    .queue-count.completed { color: var(--green); }
+    .queue-count.failed   { color: var(--red); }
+
+    .queue-label {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 0.15rem;
+    }
+
+    /* ── Uptime ── */
+    .uptime-row {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+
+    .uptime-value { color: var(--text-dim); }
+
+    .empty-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 50vh;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+
+    .pairing-code {
+      margin-top: 0.5rem;
+      padding: 0.5rem;
+      background: var(--amber-dim);
+      border: 1px solid var(--amber);
+      border-radius: 3px;
+    }
+
+    .pairing-code-label {
+      font-size: 0.55rem;
+      color: var(--amber);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.25rem;
+    }
+
+    .pairing-code-value {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: 0.15em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .pairing-code-hint {
+      font-size: 0.55rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+      line-height: 1.3;
+    }
+
+    .adapter-card[data-status="degraded"] { border-color: var(--amber-dim); }
+    .adapter-card[data-status="disconnected"] { border-color: var(--red-dim); }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <img src="/logo.png" class="header-logo" alt="Ove">
+      <h1><span>ove</span> status</h1>
+      <a href="/" class="nav-link">chat</a>
+      <a href="/trace" class="nav-link">traces</a>
+    </div>
+    <div class="header-right">
+      <span class="last-updated" id="lastUpdated"></span>
+      <label class="toggle-wrap">
+        <input type="checkbox" id="autoRefresh" checked />
+        <div class="toggle-track"></div>
+        auto-refresh
+      </label>
+    </div>
+  </header>
+
+  <div class="content" id="content">
+    <div class="empty-state" id="loading">Loading status...</div>
+  </div>
+
+  <script>
+    var API_KEY = localStorage.getItem("ove-api-key") || prompt("API Key:");
+    if (API_KEY) localStorage.setItem("ove-api-key", API_KEY);
+
+    var contentEl = document.getElementById("content");
+    var loadingEl = document.getElementById("loading");
+    var lastUpdatedEl = document.getElementById("lastUpdated");
+    var autoRefreshEl = document.getElementById("autoRefresh");
+    var refreshTimer = null;
+
+    function apiHeaders() { return { "X-API-Key": API_KEY }; }
+
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    }
+
+    function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+    function fmtUptime(secs) {
+      var d = Math.floor(secs / 86400);
+      var h = Math.floor((secs % 86400) / 3600);
+      var m = Math.floor((secs % 3600) / 60);
+      var s = Math.floor(secs % 60);
+      var parts = [];
+      if (d > 0) parts.push(d + "d");
+      if (h > 0) parts.push(h + "h");
+      if (m > 0) parts.push(m + "m");
+      parts.push(s + "s");
+      return parts.join(" ");
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return "";
+      var d = new Date(iso);
+      return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    }
+
+    function renderStatus(data) {
+      clear(contentEl);
+
+      // Uptime
+      var uptimeRow = el("div", "uptime-row");
+      uptimeRow.appendChild(document.createTextNode("uptime "));
+      uptimeRow.appendChild(el("span", "uptime-value", fmtUptime(data.uptime)));
+      contentEl.appendChild(uptimeRow);
+
+      // Adapters section
+      contentEl.appendChild(el("div", "section-header", "Adapters"));
+      var grid = el("div", "adapter-grid");
+
+      for (var i = 0; i < data.adapters.length; i++) {
+        var a = data.adapters[i];
+        var card = el("div", "adapter-card");
+        card.dataset.status = a.status;
+
+        var hdr = el("div", "adapter-card-header");
+        var left = el("div");
+        left.appendChild(el("div", "adapter-name", a.name));
+        left.appendChild(el("div", "adapter-type", a.type));
+        hdr.appendChild(left);
+        hdr.appendChild(el("span", "badge badge-" + a.status, a.status));
+        card.appendChild(hdr);
+
+        if (a.error) {
+          card.appendChild(el("div", "adapter-error", a.error));
+        }
+
+        if (a.details) {
+          // Show pairing code prominently if present
+          if (a.details.pairingCode) {
+            var pcBlock = el("div", "pairing-code");
+            pcBlock.appendChild(el("div", "pairing-code-label", "Pairing code"));
+            pcBlock.appendChild(el("div", "pairing-code-value", String(a.details.pairingCode)));
+            pcBlock.appendChild(el("div", "pairing-code-hint", "Enter on your phone: WhatsApp > Linked Devices > Link a Device"));
+            card.appendChild(pcBlock);
+          }
+
+          var detailKeys = Object.keys(a.details).filter(function (k) { return k !== "pairingCode"; });
+          if (detailKeys.length > 0) {
+            var details = el("div", "adapter-details");
+            for (var j = 0; j < detailKeys.length; j++) {
+              var val = a.details[detailKeys[j]];
+              if (val === undefined || val === null) continue;
+              var item = document.createElement("div");
+              item.appendChild(document.createTextNode(detailKeys[j] + " "));
+              item.appendChild(el("span", null, Array.isArray(val) ? val.join(", ") : String(val)));
+              details.appendChild(item);
+            }
+            card.appendChild(details);
+          }
+        }
+
+        if (a.startedAt) {
+          card.appendChild(el("div", "adapter-started", "since " + fmtTime(a.startedAt)));
+        }
+
+        grid.appendChild(card);
+      }
+      contentEl.appendChild(grid);
+
+      // Queue section
+      contentEl.appendChild(el("div", "section-header", "Queue"));
+      var qGrid = el("div", "queue-grid");
+      var statuses = ["pending", "running", "completed", "failed"];
+      for (var i = 0; i < statuses.length; i++) {
+        var s = statuses[i];
+        var qCard = el("div", "queue-card");
+        qCard.appendChild(el("div", "queue-count " + s, String(data.queue[s] || 0)));
+        qCard.appendChild(el("div", "queue-label", s));
+        qGrid.appendChild(qCard);
+      }
+      contentEl.appendChild(qGrid);
+
+      lastUpdatedEl.textContent = "updated " + new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    }
+
+    async function fetchStatus() {
+      try {
+        var res = await fetch("/api/status?key=" + encodeURIComponent(API_KEY), { headers: apiHeaders() });
+        if (!res.ok) {
+          if (loadingEl && loadingEl.parentNode) loadingEl.textContent = "Error: " + res.status;
+          return;
+        }
+        var data = await res.json();
+        renderStatus(data);
+      } catch (err) {
+        if (loadingEl && loadingEl.parentNode) {
+          loadingEl.textContent = "Error: " + err.message;
+        }
+      }
+    }
+
+    function startAutoRefresh() {
+      if (refreshTimer) clearInterval(refreshTimer);
+      refreshTimer = setInterval(fetchStatus, 5000);
+    }
+
+    function stopAutoRefresh() {
+      if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+      }
+    }
+
+    autoRefreshEl.addEventListener("change", function () {
+      if (autoRefreshEl.checked) {
+        startAutoRefresh();
+      } else {
+        stopAutoRefresh();
+      }
+    });
+
+    // Init
+    fetchStatus();
+    startAutoRefresh();
+  </script>
+</body>
+</html>

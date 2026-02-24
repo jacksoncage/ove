@@ -1,4 +1,4 @@
-import type { EventAdapter, IncomingEvent, EventSource } from "./types";
+import type { EventAdapter, IncomingEvent, EventSource, AdapterStatus } from "./types";
 import { logger } from "../logger";
 
 export function parseMention(body: string, botName: string): string | null {
@@ -21,6 +21,9 @@ export class GitHubAdapter implements EventAdapter {
   private onEvent?: (event: IncomingEvent) => void;
   private seenCommentIds = new Set<number>();
   private pollTimer?: ReturnType<typeof setInterval>;
+  private started = false;
+  private startedAt?: string;
+  private lastPollError?: string;
 
   constructor(repos: string[], botName: string, pollIntervalMs: number = 30_000) {
     if (!repos.length) throw new Error("GitHub adapter requires at least one repo");
@@ -38,10 +41,28 @@ export class GitHubAdapter implements EventAdapter {
     }
 
     this.pollTimer = setInterval(() => this.pollAll(), this.pollIntervalMs);
+    this.started = true;
+    this.startedAt = new Date().toISOString();
     logger.info("github adapter started", { repos: this.repos, pollMs: this.pollIntervalMs });
   }
 
+  getStatus(): AdapterStatus {
+    let status: AdapterStatus["status"] = "disconnected";
+    if (this.started && !this.lastPollError) status = "connected";
+    else if (this.started && this.lastPollError) status = "degraded";
+
+    return {
+      name: "github",
+      type: "event",
+      status,
+      error: this.lastPollError,
+      details: { repos: this.repos, pollIntervalMs: this.pollIntervalMs },
+      startedAt: this.startedAt,
+    };
+  }
+
   async stop(): Promise<void> {
+    this.started = false;
     if (this.pollTimer) clearInterval(this.pollTimer);
     logger.info("github adapter stopped");
   }
@@ -72,13 +93,17 @@ export class GitHubAdapter implements EventAdapter {
   }
 
   private async pollAll(): Promise<void> {
+    let hadError = false;
     for (const repo of this.repos) {
       try {
         await this.pollRepo(repo);
       } catch (err) {
+        hadError = true;
+        this.lastPollError = String(err);
         logger.error("github poll error", { repo, error: String(err) });
       }
     }
+    if (!hadError) this.lastPollError = undefined;
   }
 
   private async pollRepo(repo: string): Promise<void> {

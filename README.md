@@ -205,6 +205,7 @@ The HTTP adapter serves two pages (no auth required to load — API key is enter
 |-------|------|-------------|
 | `/` | Chat UI | Send messages to Ove, see streaming status updates and results |
 | `/trace` | Trace Viewer | Browse tasks and inspect per-task trace timelines |
+| `/status` | Status | Adapter health, connection state, queue stats, WhatsApp pairing code |
 
 ### Trace Viewer (`/trace`)
 
@@ -289,6 +290,21 @@ bun test    # 224 tests
 10. Result sent back, worktree cleaned up
 
 See [example conversations](docs/examples.md) for all flows.
+
+## Security
+
+Ove executes arbitrary code on your machine via Claude Code CLI. Treat it accordingly.
+
+**Never expose Ove to the public internet.** The HTTP API and Web UI are designed for local or private network use only. There is no rate limiting, no session management, and the API key is a single shared secret. Putting this behind a public URL is asking for trouble.
+
+- **Run on localhost or a private network.** If you need remote access, put it behind a VPN or SSH tunnel — not a reverse proxy with a public domain.
+- **Keep your API key secret.** It grants full access to submit tasks, read chat history, and view adapter status (including WhatsApp pairing codes). Rotate it if compromised.
+- **Ove runs code as your user.** Whatever permissions your shell user has, Ove's spawned agents have too — SSH keys, git credentials, cloud CLI sessions, everything. Run it under a dedicated user with minimal permissions where possible.
+- **Audit your config.** The `users` map controls who can submit tasks. Don't add wildcard entries. Lock repos to specific users.
+- **WhatsApp pairing codes are sensitive.** They appear on the `/status` page (behind API key auth) and in server logs. Anyone with the code can link a device to your WhatsApp account.
+- **Docker helps.** Running in Docker limits blast radius. The container only mounts what you give it.
+
+This is a power tool for developers, not a hosted service. You are responsible for securing your deployment.
 
 ## License
 

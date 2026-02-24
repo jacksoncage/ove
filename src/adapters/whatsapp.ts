@@ -4,7 +4,7 @@ import makeWASocket, {
   DisconnectReason,
   type WASocket,
 } from "baileys";
-import type { ChatAdapter, IncomingMessage } from "./types";
+import type { ChatAdapter, IncomingMessage, AdapterStatus } from "./types";
 import { logger } from "../logger";
 
 export class WhatsAppAdapter implements ChatAdapter {
@@ -15,6 +15,10 @@ export class WhatsAppAdapter implements ChatAdapter {
   private allowedChats: Set<string>;
   private reconnectAttempt = 0;
   private sentByBot = new Set<string>();
+  private connectionState: "open" | "close" | "connecting" = "connecting";
+  private lastError?: string;
+  private startedAt?: string;
+  private pairingCode?: string;
 
   constructor(opts: { authDir?: string; phoneNumber?: string; allowedChats?: string[] } = {}) {
     this.authDir = opts.authDir ?? "./auth/whatsapp";
@@ -35,13 +39,17 @@ export class WhatsAppAdapter implements ChatAdapter {
 
     let pairingRequested = false;
 
+    this.startedAt = this.startedAt || new Date().toISOString();
+
     this.sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
+      if (connection) this.connectionState = connection as "open" | "close" | "connecting";
       // Request pairing code when server is ready (sends qr event)
       if (qr && this.phoneNumber && !pairingRequested) {
         pairingRequested = true;
         try {
           const phone = this.phoneNumber.replace(/[^0-9]/g, "");
           const code = await this.sock!.requestPairingCode(phone);
+          this.pairingCode = code;
           logger.info(`whatsapp pairing code: ${code}`, { phone });
           console.log(`\n  WhatsApp pairing code: ${code}`);
           console.log(`  Enter this code on your phone: WhatsApp → Linked Devices → Link a Device\n`);
@@ -52,16 +60,20 @@ export class WhatsAppAdapter implements ChatAdapter {
 
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+        this.lastError = `disconnected (status ${statusCode})`;
         if (statusCode !== DisconnectReason.loggedOut) {
           this.reconnectAttempt++;
           const delay = Math.min(2000 * this.reconnectAttempt, 30_000);
           logger.warn("whatsapp disconnected, reconnecting...", { statusCode, delay });
           setTimeout(() => this.start(onMessage), delay);
         } else {
+          this.lastError = "logged out";
           logger.error("whatsapp logged out");
         }
       } else if (connection === "open") {
         this.reconnectAttempt = 0;
+        this.lastError = undefined;
+        this.pairingCode = undefined;
         logger.info("whatsapp adapter connected");
       }
     });
@@ -149,6 +161,22 @@ export class WhatsAppAdapter implements ChatAdapter {
         this.onMessage?.(msg);
       }
     });
+  }
+
+  getStatus(): AdapterStatus {
+    let status: AdapterStatus["status"] = "unknown";
+    if (this.connectionState === "open") status = "connected";
+    else if (this.connectionState === "close") status = "disconnected";
+    else if (this.connectionState === "connecting") status = this.reconnectAttempt > 0 ? "degraded" : "unknown";
+
+    return {
+      name: "whatsapp",
+      type: "chat",
+      status,
+      error: this.lastError,
+      details: { reconnectAttempt: this.reconnectAttempt, pairingCode: this.pairingCode },
+      startedAt: this.startedAt,
+    };
   }
 
   async stop(): Promise<void> {

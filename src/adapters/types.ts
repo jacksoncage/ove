@@ -6,10 +6,20 @@ export interface IncomingMessage {
   updateStatus: (text: string) => Promise<void>;
 }
 
+export interface AdapterStatus {
+  name: string;
+  type: "chat" | "event";
+  status: "connected" | "disconnected" | "degraded" | "unknown";
+  error?: string;
+  details?: Record<string, unknown>;
+  startedAt?: string;
+}
+
 export interface ChatAdapter {
   start(onMessage: (msg: IncomingMessage) => void): Promise<void>;
   stop(): Promise<void>;
   sendToUser?(userId: string, text: string): Promise<void>;
+  getStatus?(): AdapterStatus;
 }
 
 export type EventSource =
@@ -29,4 +39,5 @@ export interface EventAdapter {
   start(onEvent: (event: IncomingEvent) => void): Promise<void>;
   stop(): Promise<void>;
   respondToEvent(eventId: string, text: string): Promise<void>;
+  getStatus?(): AdapterStatus;
 }

@@ -211,6 +211,7 @@ async function main() {
     // Wire up chat handler for HTTP adapter so web UI gets full chat features
     if (ea instanceof HttpApiAdapter) {
       ea.setMessageHandler(handleMessage);
+      ea.setAdapters(adapters, eventAdapters);
     }
     await ea.start((event) => handleEvent(event, ea));
   }

@@ -1,12 +1,14 @@
 // src/adapters/slack.ts
 import { App } from "@slack/bolt";
-import type { ChatAdapter, IncomingMessage } from "./types";
+import type { ChatAdapter, IncomingMessage, AdapterStatus } from "./types";
 import { logger } from "../logger";
 import { debounce } from "./debounce";
 
 export class SlackAdapter implements ChatAdapter {
   private app: App;
   private onMessage?: (msg: IncomingMessage) => void;
+  private started = false;
+  private startedAt?: string;
 
   constructor() {
     this.app = new App({
@@ -87,10 +89,22 @@ export class SlackAdapter implements ChatAdapter {
     });
 
     await this.app.start();
+    this.started = true;
+    this.startedAt = new Date().toISOString();
     logger.info("slack adapter started");
   }
 
+  getStatus(): AdapterStatus {
+    return {
+      name: "slack",
+      type: "chat",
+      status: this.started ? "connected" : "disconnected",
+      startedAt: this.startedAt,
+    };
+  }
+
   async stop(): Promise<void> {
+    this.started = false;
     await this.app.stop();
     logger.info("slack adapter stopped");
   }

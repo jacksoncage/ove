@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join, extname } from "node:path";
-import type { EventAdapter, IncomingEvent, IncomingMessage } from "./types";
+import type { EventAdapter, IncomingEvent, IncomingMessage, ChatAdapter, AdapterStatus } from "./types";
 import type { TraceStore } from "../trace";
 import type { TaskQueue } from "../queue";
 import type { SessionStore } from "../sessions";
@@ -25,7 +25,11 @@ export class HttpApiAdapter implements EventAdapter {
   private chats = new Map<string, PendingChat>();
   private webUiHtml: string;
   private traceUiHtml: string;
+  private statusUiHtml: string;
   private publicDir: string;
+  private chatAdapters: ChatAdapter[] = [];
+  private eventAdapters: EventAdapter[] = [];
+  private startedAt?: string;
 
   constructor(port: number, apiKey: string, trace: TraceStore, queue?: TaskQueue, sessions?: SessionStore) {
     this.port = port;
@@ -45,11 +49,32 @@ export class HttpApiAdapter implements EventAdapter {
     } catch {
       this.traceUiHtml = "<html><body><p>Trace viewer not found. Place public/trace.html in project root.</p></body></html>";
     }
+    try {
+      this.statusUiHtml = readFileSync(join(publicDir, "status.html"), "utf-8");
+    } catch {
+      this.statusUiHtml = "<html><body><p>Status page not found. Place public/status.html in project root.</p></body></html>";
+    }
   }
 
   /** Set the chat message handler so web UI messages go through the full chat pipeline */
   setMessageHandler(handler: (msg: IncomingMessage) => void): void {
     this.onMessage = handler;
+  }
+
+  /** Register all adapters so the status page can query them */
+  setAdapters(chat: ChatAdapter[], event: EventAdapter[]): void {
+    this.chatAdapters = chat;
+    this.eventAdapters = event;
+  }
+
+  getStatus(): AdapterStatus {
+    return {
+      name: "http",
+      type: "event",
+      status: this.server ? "connected" : "disconnected",
+      startedAt: this.startedAt,
+      details: { port: this.port },
+    };
   }
 
   async start(onEvent: (event: IncomingEvent) => void): Promise<void> {
@@ -76,12 +101,36 @@ export class HttpApiAdapter implements EventAdapter {
           });
         }
 
+        if (path === "/status" || path === "/status.html") {
+          return new Response(self.statusUiHtml, {
+            headers: { "Content-Type": "text/html" },
+          });
+        }
+
         // Auth check for API routes
         if (path.startsWith("/api/")) {
           const key = req.headers.get("X-API-Key") || url.searchParams.get("key");
           if (key !== self.apiKey) {
             return Response.json({ error: "Unauthorized" }, { status: 401 });
           }
+        }
+
+        // GET /api/status — adapter health + queue stats
+        if (path === "/api/status" && req.method === "GET") {
+          const adapterStatuses: AdapterStatus[] = [];
+          for (const a of self.chatAdapters) {
+            adapterStatuses.push(a.getStatus?.() ?? { name: a.constructor.name, type: "chat", status: "unknown" });
+          }
+          for (const a of self.eventAdapters) {
+            adapterStatuses.push(a.getStatus?.() ?? { name: a.constructor.name, type: "event", status: "unknown" });
+          }
+          const queueStats = self.queue?.stats() ?? { pending: 0, running: 0, completed: 0, failed: 0 };
+          return Response.json({
+            adapters: adapterStatuses,
+            queue: queueStats,
+            uptime: process.uptime(),
+            timestamp: new Date().toISOString(),
+          });
         }
 
         // GET /api/tasks — list recent tasks
@@ -248,6 +297,7 @@ export class HttpApiAdapter implements EventAdapter {
       },
     });
 
+    this.startedAt = new Date().toISOString();
     logger.info("http api adapter started", { port: this.port });
   }
 
