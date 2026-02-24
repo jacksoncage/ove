@@ -41,7 +41,7 @@ Talk to Ove the way you'd talk to a teammate. These all work:
 "refactor the user service, it's getting messy"
 ```
 
-Ove figures out the intent, picks the right repo, and gets to work. For common tasks, there are also shorthand commands:
+Ove figures out the intent, picks the right repo, and gets to work. See [more examples](docs/examples.md). For common tasks, there are also shorthand commands:
 
 ```
 review PR #N on <repo>      Code review with inline comments
@@ -275,21 +275,6 @@ See the [Claude Code skills docs](https://code.claude.com/docs/en/skills) for th
 ```bash
 bun test    # 224 tests
 ```
-
-## How It Works
-
-1. Message arrives via any transport (Slack, WhatsApp, Telegram, Discord, CLI, HTTP API, or GitHub comment)
-2. Chat adapters use `handleMessage`, event adapters use `handleEvent`
-3. Router parses intent and extracts repo/args
-4. Task gets queued in SQLite (one per repo at a time, different repos run in parallel)
-5. Worker loop picks up tasks concurrently (up to 5 parallel tasks across different repos)
-6. Each task gets an isolated git worktree
-7. Runs the configured agent runner (`claude -p` or `codex exec`) with streaming JSON output
-8. Status updates stream back (chat: edits a message, HTTP: SSE, GitHub: single comment)
-9. If tracing is enabled (`OVE_TRACE=true`), lifecycle events, tool calls, and outputs are recorded in SQLite — viewable in the trace viewer at `/trace`
-10. Result sent back, worktree cleaned up
-
-See [example conversations](docs/examples.md) for all flows.
 
 ## Security
 

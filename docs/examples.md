@@ -9,10 +9,7 @@ You don't need commands. Just describe what you need, like you'd tell a colleagu
 **Slack DM:**
 ```
 alice: the login page is broken, users get a 500 after submitting the form
-ove:   Task queued (aaa11111). Working on it...
-       > Grep: "login" in src/
-       > Read: src/routes/auth.ts
-       > Read: src/middleware/session.ts
+ove:   Working on it...
 ove:   Found the issue — the session middleware wasn't awaiting the
        database call on line 34 of src/middleware/session.ts. Created
        PR #47 with the fix and added a test:
@@ -22,11 +19,7 @@ ove:   Found the issue — the session middleware wasn't awaiting the
 **Telegram:**
 ```
 alice: can you add input validation to the user registration endpoint in my-app?
-ove:   Task queued (bbb22222). Working on it...
-       > Read: src/routes/users.ts
-       > Edit: src/routes/users.ts
-       > Write: src/routes/users.test.ts
-       > Bash: bun test
+ove:   Working on it...
 ove:   Done. Added zod validation for email, password length, and
        username format. All 48 tests pass. PR #48:
        https://github.com/org/my-app/pull/48
@@ -37,10 +30,6 @@ ove:   Done. Added zod validation for email, password length, and
 alice: how does the caching layer work in my-app? I need to understand
        it before I make changes
 ove:   Looking into it...
-       > Glob: **/*cache*
-       > Read: src/cache/redis.ts
-       > Read: src/cache/keys.ts
-       > Read: src/middleware/cache.ts
 ove:   The caching layer has 3 parts:
        1. src/cache/redis.ts — Redis client wrapper with connection pooling
        2. src/cache/keys.ts — key generation with TTL per resource type
@@ -55,10 +44,7 @@ ove:   The caching layer has 3 parts:
 **Slack DM:**
 ```
 alice: review PR #42 on my-app
-ove:   Task queued (abc12345). Working on it...
-       > Bash: gh pr diff 42
-       > Read: src/auth.ts
-       > Read: src/middleware.ts
+ove:   Working on it...
 ove:   PR #42 review done. Left 3 inline comments:
        - src/auth.ts:15 — potential SQL injection in query param
        - src/middleware.ts:42 — missing error handler for async route
@@ -76,14 +62,7 @@ Ove replies with a comment containing the review summary.
 **Telegram:**
 ```
 alice: fix issue #15 on my-app
-ove:   Task queued (bbb22222). Working on it...
-       > Bash: gh issue view 15
-       > Grep: "handleAuth"
-       > Read: src/auth.ts
-       > Edit: src/auth.ts
-       > Bash: bun test
-       > Bash: git add -A && git commit -m "Fix auth token expiry check"
-       > Bash: gh pr create --title "Fix #15: auth token expiry"
+ove:   Working on it...
 ove:   Fixed! Created PR #43:
        https://github.com/org/my-app/pull/43
        Changed src/auth.ts to properly check token expiry timestamps.
@@ -94,10 +73,7 @@ ove:   Fixed! Created PR #43:
 **Discord:**
 ```
 alice: validate my-app
-ove:   Task queued (ccc33333). Working on it...
-       > Bash: bun test
-       > Read: package.json
-       > Bash: bunx eslint src/
+ove:   Working on it...
 ove:   All 42 tests pass. ESLint found 3 warnings:
        • src/utils.ts:12 — unused variable 'tmp'
        • src/api.ts:45 — prefer const
@@ -108,11 +84,7 @@ ove:   All 42 tests pass. ESLint found 3 warnings:
 
 ```
 alice: simplify src/router.ts in my-app
-ove:   Task queued (ddd44444). Working on it...
-       > Read: src/router.ts
-       > Edit: src/router.ts
-       > Bash: bun test
-       > Bash: gh pr create --title "Simplify src/router.ts"
+ove:   Working on it...
 ove:   Created PR #44. Reduced cyclomatic complexity from 18 to 9.
        Extracted 3 helper functions, removed duplicated regex logic.
 ```
@@ -142,12 +114,7 @@ ove:   Let's think about this. Key questions:
 
 ```
 alice: create project my-api with template express
-ove:   Task queued (eee55555). Working on it...
-       > Bash: mkdir -p my-api && cd my-api && npm init -y
-       > Write: src/index.ts
-       > Bash: npm install express
-       > Bash: git init && git add -A && git commit -m "Initial commit"
-       > Bash: gh repo create my-api --public --push
+ove:   Working on it...
 ove:   Project "my-api" created and pushed to GitHub:
        https://github.com/org/my-api
        Structure: Express + TypeScript, src/index.ts entry point
@@ -182,9 +149,6 @@ Anything you type works. Ove parses intent from natural language.
 
 ```
 alice: what does the auth middleware do in my-app
-ove:   Task queued (fff66666). Working on it...
-       > Glob: **/*middleware*
-       > Read: src/middleware/auth.ts
 ove:   The auth middleware in my-app:
        1. Extracts JWT from Authorization header
        2. Verifies signature against JWKS endpoint
@@ -195,10 +159,7 @@ ove:   The auth middleware in my-app:
 
 ```
 alice: the CI is red on main, can you check what's going on?
-ove:   Task queued (ggg77777). Working on it...
-       > Bash: gh run list --limit 5
-       > Bash: gh run view 12345 --log-failed
-       > Read: src/api.test.ts
+ove:   Looking into it...
 ove:   The test "should return 404 for unknown routes" is failing
        because the new /health endpoint was added without updating
        the route count assertion. Line 89 in src/api.test.ts expects
@@ -217,12 +178,10 @@ curl -X POST http://localhost:3000/api/message \
 
 **Stream results via SSE:**
 ```bash
-curl -N http://localhost:3000/api/tasks/abc12345/stream \
-  -H "X-API-Key: your-secret"
+curl -N "http://localhost:3000/api/message/<eventId>/stream?key=your-secret"
 
-data: {"type":"status","message":"Running tests..."}
-data: {"type":"status","message":"All 42 tests pass."}
-data: {"type":"done","result":"Validation complete. No issues."}
+data: {"status":"pending","statusText":"Running tests..."}
+data: {"status":"completed","result":"Validation complete. No issues."}
 ```
 
 **Web UI:** Open `http://localhost:3000` in a browser for a chat-style interface.
