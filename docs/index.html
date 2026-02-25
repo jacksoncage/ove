@@ -183,22 +183,22 @@
 
     /* ─── INSTALL BAR ─── */
     .install-bar {
-      background: var(--surface);
-      border-bottom: 1px solid var(--subtle);
-      padding: 20px 32px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 32px;
       text-align: center;
     }
 
     .install-bar code {
       font-family: "JetBrains Mono", monospace;
-      font-size: 0.85rem;
-      color: var(--copper-light);
+      font-size: 0.82rem;
+      color: var(--accent);
       letter-spacing: -0.02em;
     }
 
     .install-bar code::before {
       content: "$ ";
-      color: var(--muted);
+      color: var(--text-muted);
     }
 
     /* ─── MAIN CONTENT ─── */
@@ -209,8 +209,8 @@
     }
 
     .section {
-      padding: 72px 0;
-      border-bottom: 1px solid var(--subtle);
+      padding: 64px 0;
+      border-bottom: 1px solid var(--border);
     }
 
     .section:last-child {
@@ -219,26 +219,26 @@
 
     /* ─── SECTION HEADERS ─── */
     h2 {
-      font-family: "Bitter", Georgia, serif;
-      font-size: 1.6rem;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 1.3rem;
       font-weight: 700;
-      color: var(--text-bright);
+      color: var(--text);
       margin-bottom: 8px;
       letter-spacing: -0.01em;
     }
 
     .section-note {
-      color: var(--muted);
+      color: var(--text-dim);
       font-style: italic;
       margin-bottom: 32px;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
     }
 
     h3 {
-      font-family: "Bitter", Georgia, serif;
-      font-size: 1.05rem;
-      font-weight: 600;
-      color: var(--copper);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--accent);
       margin: 32px 0 10px;
       letter-spacing: 0.01em;
     }
@@ -252,80 +252,81 @@
     .features {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 2px;
-      background: var(--subtle);
-      border: 1px solid var(--subtle);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
       margin-top: 32px;
     }
 
     .feature {
-      padding: 28px 24px;
-      background: var(--surface);
+      padding: 24px 20px;
+      background: var(--bg);
     }
 
     .feature-label {
       font-family: "JetBrains Mono", monospace;
-      font-size: 0.7rem;
+      font-size: 0.65rem;
       text-transform: uppercase;
       letter-spacing: 0.12em;
-      color: var(--copper-dim);
-      margin-bottom: 10px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
     }
 
     .feature h3 {
-      font-family: "Bitter", Georgia, serif;
-      font-size: 1.1rem;
-      color: var(--text-bright);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.95rem;
+      color: var(--text);
       margin: 0 0 8px;
-      font-weight: 600;
+      font-weight: 500;
     }
 
     .feature p {
-      color: var(--muted);
-      font-size: 0.9rem;
+      color: var(--text-dim);
+      font-size: 0.85rem;
       line-height: 1.55;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
 
     .feature code {
       font-family: "JetBrains Mono", monospace;
-      font-size: 0.78rem;
-      color: var(--copper-light);
-      background: var(--raised);
+      font-size: 0.75rem;
+      color: var(--accent);
+      background: var(--bg-item);
       padding: 3px 8px;
-      border: 1px solid var(--subtle);
+      border: 1px solid var(--border);
       display: inline-block;
     }
 
     /* ─── PERSONALITY QUOTES ─── */
     .ove-says {
-      border-left: 2px solid var(--copper-dim);
-      padding: 16px 0 16px 20px;
-      margin: 36px 0;
+      border-left: 2px solid var(--accent);
+      padding: 14px 0 14px 20px;
+      margin: 32px 0;
       font-style: italic;
-      color: var(--copper);
-      font-size: 1.05rem;
+      color: var(--text-dim);
+      font-size: 0.95rem;
     }
 
     .ove-says .attr {
       display: block;
       font-style: normal;
-      color: var(--muted);
-      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-size: 0.75rem;
       margin-top: 6px;
       font-family: "JetBrains Mono", monospace;
     }
 
     /* ─── CODE BLOCKS ─── */
     pre {
-      background: var(--surface);
-      border: 1px solid var(--subtle);
-      padding: 18px 20px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      padding: 16px 18px;
       overflow-x: auto;
-      font-size: 0.82rem;
+      font-size: 0.8rem;
       margin: 14px 0;
       line-height: 1.65;
       position: relative;
+      border-radius: 3px;
     }
 
     pre::before {
@@ -337,11 +338,12 @@
       font-size: 0.6rem;
       text-transform: uppercase;
       letter-spacing: 0.1em;
-      color: var(--muted);
+      color: var(--text-muted);
       padding: 4px 10px;
-      background: var(--raised);
-      border-left: 1px solid var(--subtle);
-      border-bottom: 1px solid var(--subtle);
+      background: var(--bg-item);
+      border-left: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      border-radius: 0 3px 0 3px;
     }
 
     code {
@@ -355,11 +357,12 @@
     }
 
     p code {
-      background: var(--raised);
-      border: 1px solid var(--subtle);
+      background: var(--bg-item);
+      border: 1px solid var(--border);
       padding: 1px 6px;
-      color: var(--copper-light);
+      color: var(--accent);
       font-size: 0.82em;
+      border-radius: 2px;
     }
 
     /* ─── LISTS ─── */
@@ -374,7 +377,7 @@
       counter-increment: step;
       padding: 8px 0 8px 36px;
       position: relative;
-      border-bottom: 1px solid var(--subtle);
+      border-bottom: 1px solid var(--border);
       font-size: 0.95rem;
     }
 
@@ -388,25 +391,25 @@
       left: 0;
       font-family: "JetBrains Mono", monospace;
       font-size: 0.75rem;
-      color: var(--copper-dim);
+      color: var(--text-muted);
       width: 22px;
       text-align: right;
     }
 
     /* ─── LINKS ─── */
     a {
-      color: var(--copper);
+      color: var(--accent);
       text-decoration: none;
-      border-bottom: 1px solid var(--subtle);
+      border-bottom: 1px solid var(--border);
       transition: border-color 0.15s;
     }
 
     a:hover {
-      border-bottom-color: var(--copper);
+      border-bottom-color: var(--accent);
     }
 
     strong {
-      color: var(--text-bright);
+      color: var(--text);
       font-weight: 500;
     }
 
@@ -423,14 +426,14 @@
       display: grid;
       grid-template-columns: auto 1fr;
       gap: 0;
-      border: 1px solid var(--subtle);
+      border: 1px solid var(--border);
       font-size: 0.88rem;
     }
 
     .cmd-grid dt,
     .cmd-grid dd {
       padding: 10px 16px;
-      border-bottom: 1px solid var(--subtle);
+      border-bottom: 1px solid var(--border);
     }
 
     .cmd-grid dt:last-of-type,
@@ -440,15 +443,15 @@
 
     .cmd-grid dt {
       font-family: "JetBrains Mono", monospace;
-      font-size: 0.8rem;
-      color: var(--copper-light);
-      background: var(--surface);
+      font-size: 0.78rem;
+      color: var(--accent);
+      background: var(--bg-panel);
       white-space: nowrap;
-      border-right: 1px solid var(--subtle);
+      border-right: 1px solid var(--border);
     }
 
     .cmd-grid dd {
-      color: var(--muted);
+      color: var(--text-dim);
     }
 
     /* ─── HOW IT WORKS ─── */
@@ -462,7 +465,7 @@
       display: flex;
       gap: 16px;
       padding: 14px 0;
-      border-bottom: 1px solid var(--subtle);
+      border-bottom: 1px solid var(--border);
       align-items: baseline;
       font-size: 0.95rem;
     }
@@ -474,14 +477,14 @@
     .pipeline .step-n {
       font-family: "JetBrains Mono", monospace;
       font-size: 0.7rem;
-      color: var(--copper-dim);
+      color: var(--text-muted);
       flex-shrink: 0;
       width: 16px;
       text-align: right;
     }
 
     .pipeline .step-arrow {
-      color: var(--subtle);
+      color: var(--border-light);
       flex-shrink: 0;
       font-size: 0.8rem;
     }
@@ -490,20 +493,20 @@
     footer {
       padding: 40px 32px;
       text-align: center;
-      color: var(--muted);
-      font-size: 0.82rem;
-      border-top: 1px solid var(--subtle);
+      color: var(--text-dim);
+      font-size: 0.78rem;
+      border-top: 1px solid var(--border);
       font-family: "JetBrains Mono", monospace;
       letter-spacing: 0.02em;
     }
 
     footer a {
-      color: var(--copper-dim);
+      color: var(--text-muted);
       border-bottom: none;
     }
 
     footer a:hover {
-      color: var(--copper);
+      color: var(--accent);
     }
 
     /* ─── RESPONSIVE ─── */
@@ -514,8 +517,8 @@
         gap: 32px;
       }
       .hero-portrait {
-        width: 160px;
-        height: 160px;
+        width: 120px;
+        height: 120px;
         margin: 0 auto;
       }
       .hero-quote {
@@ -525,7 +528,7 @@
         justify-content: center;
       }
       .hero-text h1 {
-        font-size: 3rem;
+        font-size: 2rem;
       }
       .features {
         grid-template-columns: 1fr;
