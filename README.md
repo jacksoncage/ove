@@ -92,14 +92,21 @@ The image includes Bun, git, and Claude CLI (install Codex CLI separately if nee
 
 ### VM
 
-Ove runs well on a small VM (2 CPU, 4 GB RAM). Install Bun, Claude Code (or Codex CLI), and GitHub CLI, then run as a systemd service:
+Ove runs well on a small VM (2 CPU, 4 GB RAM). Install Bun, Claude Code (or Codex CLI), and GitHub CLI:
 
 ```bash
 git clone git@github.com:jacksoncage/ove.git && cd ove
 bun install
 ove init
-sudo cp deploy/ove.service /etc/systemd/system/ove.service
-sudo systemctl enable --now ove
+```
+
+`ove init` walks you through transport setup, repo config, tracing, and optionally installs + enables a systemd service. Once running:
+
+```bash
+sudo systemctl status ove      # check status
+sudo journalctl -u ove -f      # follow logs
+sudo systemctl restart ove     # restart
+sudo systemctl stop ove        # stop
 ```
 
 ## Transport Setup
