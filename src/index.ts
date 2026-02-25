@@ -140,7 +140,8 @@ if (process.env.HTTP_API_PORT) {
     process.env.HTTP_API_KEY || crypto.randomUUID(),
     trace,
     queue,
-    sessions
+    sessions,
+    process.env.HTTP_API_HOST
   );
   eventAdapters.push(httpAdapter);
 }

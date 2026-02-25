@@ -209,6 +209,8 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
       process.stdout.write("\n");
       const port = (await ask(rl, "HTTP API port [3000]")) || "3000";
       envValues.HTTP_API_PORT = port;
+      const host = await ask(rl, "Bind address [127.0.0.1] (0.0.0.0 for all interfaces)");
+      envValues.HTTP_API_HOST = host || "127.0.0.1";
       const key = await ask(rl, "API key (leave empty to generate)");
       envValues.HTTP_API_KEY = key || crypto.randomUUID();
     }
@@ -223,6 +225,15 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
 
     if (has("CLI")) {
       envValues.CLI_MODE = "true";
+    }
+
+    // Tracing
+    if (!fixing) {
+      process.stdout.write("\n");
+      const enableTrace = await ask(rl, "Enable task tracing? (y/n)");
+      if (enableTrace.toLowerCase() === "y") {
+        envValues.OVE_TRACE = "true";
+      }
     }
 
     // Collect repos
@@ -325,6 +336,7 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
       if (has("HTTP API")) {
         envLines.push("# HTTP API + Web UI");
         envLines.push(`HTTP_API_PORT=${envValues.HTTP_API_PORT || "3000"}`);
+        envLines.push(`HTTP_API_HOST=${envValues.HTTP_API_HOST || "127.0.0.1"}`);
         envLines.push(`HTTP_API_KEY=${envValues.HTTP_API_KEY || ""}`);
         envLines.push("");
       }
@@ -341,6 +353,13 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
       if (has("CLI")) {
         envLines.push("# CLI mode");
         envLines.push("CLI_MODE=true");
+        envLines.push("");
+      }
+
+      // Tracing
+      if (envValues.OVE_TRACE) {
+        envLines.push("# Tracing");
+        envLines.push(`OVE_TRACE=${envValues.OVE_TRACE}`);
         envLines.push("");
       }
 
@@ -367,15 +386,38 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
     }
 
     // Systemd service setup
+    let installedSystemd = false;
     if (!fixing) {
       const installService = await ask(rl, "Install as systemd service? (y/n)");
       if (installService.toLowerCase() === "y") {
-        await installSystemdService(rl);
+        installedSystemd = await installSystemdService(rl);
       }
     }
 
     if (!fixing) {
-      process.stdout.write("\n  Nåväl. Run 'ove start' when you're ready.\n\n");
+      process.stdout.write("\n  Nåväl.\n");
+      if (installedSystemd) {
+        process.stdout.write("\n  Useful commands:\n");
+        process.stdout.write("    sudo systemctl status ove     # check status\n");
+        process.stdout.write("    sudo journalctl -u ove -f     # follow logs\n");
+        process.stdout.write("    sudo systemctl restart ove    # restart\n");
+        process.stdout.write("    sudo systemctl stop ove       # stop\n");
+        if (has("HTTP API")) {
+          const port = envValues.HTTP_API_PORT || "3000";
+          const host = envValues.HTTP_API_HOST || "127.0.0.1";
+          const displayHost = host === "0.0.0.0" ? "<your-ip>" : host;
+          process.stdout.write(`\n  Web UI: http://${displayHost}:${port}\n`);
+          if (envValues.OVE_TRACE === "true") {
+            process.stdout.write(`  Traces: http://${displayHost}:${port}/trace\n`);
+          }
+          if (host === "0.0.0.0") {
+            process.stdout.write("  (bound to all interfaces)\n");
+          }
+        }
+        process.stdout.write("\n");
+      } else {
+        process.stdout.write("  Run 'ove start' when you're ready.\n\n");
+      }
     } else {
       process.stdout.write("\n");
     }
@@ -384,7 +426,7 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
   }
 }
 
-async function installSystemdService(rl: ReturnType<typeof createInterface>): Promise<void> {
+async function installSystemdService(rl: ReturnType<typeof createInterface>): Promise<boolean> {
   const detectedUser = userInfo().username;
   const detectedDir = resolve(".");
   let detectedBun = "";
@@ -400,7 +442,7 @@ async function installSystemdService(rl: ReturnType<typeof createInterface>): Pr
 
   if (!bunPath) {
     process.stdout.write("  Could not find bun. Skipping service install.\n");
-    return;
+    return false;
   }
 
   const envPath = resolve(workDir, ".env");
@@ -438,8 +480,10 @@ WantedBy=multi-user.target
         execFileSync("sudo", ["systemctl", "start", "ove"]);
         process.stdout.write("  Service started.\n");
       }
+      return true;
     } catch (err) {
       process.stdout.write(`  Failed to install service: ${err}\n`);
     }
   }
+  return false;
 }

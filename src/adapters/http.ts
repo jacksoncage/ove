@@ -31,9 +31,12 @@ export class HttpApiAdapter implements EventAdapter {
   private eventAdapters: EventAdapter[] = [];
   private startedAt?: string;
 
-  constructor(port: number, apiKey: string, trace: TraceStore, queue?: TaskQueue, sessions?: SessionStore) {
+  private hostname: string;
+
+  constructor(port: number, apiKey: string, trace: TraceStore, queue?: TaskQueue, sessions?: SessionStore, hostname?: string) {
     this.port = port;
     this.apiKey = apiKey;
+    this.hostname = hostname || "0.0.0.0";
     this.trace = trace;
     this.queue = queue || null;
     this.sessions = sessions || null;
@@ -83,6 +86,7 @@ export class HttpApiAdapter implements EventAdapter {
 
     this.server = Bun.serve({
       port: this.port,
+      hostname: this.hostname,
       idleTimeout: 255, // SSE connections need to stay open for long-running tasks
       async fetch(req) {
         const url = new URL(req.url);
