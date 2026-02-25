@@ -1,4 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
+import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
 import type { Config } from "./config";
 
@@ -363,6 +366,14 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
       process.stdout.write("  Wrote config.json\n");
     }
 
+    // Systemd service setup
+    if (!fixing) {
+      const installService = await ask(rl, "Install as systemd service? (y/n)");
+      if (installService.toLowerCase() === "y") {
+        await installSystemdService(rl);
+      }
+    }
+
     if (!fixing) {
       process.stdout.write("\n  Nåväl. Run 'ove start' when you're ready.\n\n");
     } else {
@@ -370,5 +381,65 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
     }
   } finally {
     rl.close();
+  }
+}
+
+async function installSystemdService(rl: ReturnType<typeof createInterface>): Promise<void> {
+  const detectedUser = userInfo().username;
+  const detectedDir = resolve(".");
+  let detectedBun = "";
+  try {
+    detectedBun = execFileSync("which", ["bun"]).toString().trim();
+  } catch {
+    // bun not in PATH
+  }
+
+  const user = (await ask(rl, `User [${detectedUser}]`)) || detectedUser;
+  const workDir = (await ask(rl, `Working directory [${detectedDir}]`)) || detectedDir;
+  const bunPath = (await ask(rl, `Bun path [${detectedBun}]`)) || detectedBun;
+
+  if (!bunPath) {
+    process.stdout.write("  Could not find bun. Skipping service install.\n");
+    return;
+  }
+
+  const envPath = resolve(workDir, ".env");
+  const service = `[Unit]
+Description=Ove - Personal AI coding assistant
+After=network.target
+
+[Service]
+Type=simple
+User=${user}
+WorkingDirectory=${workDir}
+ExecStart=${bunPath} run src/index.ts
+Restart=always
+RestartSec=5
+EnvironmentFile=${envPath}
+
+[Install]
+WantedBy=multi-user.target
+`;
+
+  const servicePath = resolve(workDir, "ove.service");
+  writeFileSync(servicePath, service);
+  process.stdout.write(`  Wrote ${servicePath}\n`);
+
+  const install = await ask(rl, "Install and enable now? Requires sudo (y/n)");
+  if (install.toLowerCase() === "y") {
+    try {
+      execFileSync("sudo", ["cp", servicePath, "/etc/systemd/system/ove.service"]);
+      execFileSync("sudo", ["systemctl", "daemon-reload"]);
+      execFileSync("sudo", ["systemctl", "enable", "ove"]);
+      process.stdout.write("  Service installed and enabled.\n");
+
+      const startNow = await ask(rl, "Start service now? (y/n)");
+      if (startNow.toLowerCase() === "y") {
+        execFileSync("sudo", ["systemctl", "start", "ove"]);
+        process.stdout.write("  Service started.\n");
+      }
+    } catch (err) {
+      process.stdout.write(`  Failed to install service: ${err}\n`);
+    }
   }
 }

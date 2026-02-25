@@ -8,3 +8,4 @@ auth/
 *.db-wal
 config.json
 .claude/settings.local.json
+ove.service
