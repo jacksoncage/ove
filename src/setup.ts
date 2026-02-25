@@ -59,7 +59,9 @@ export function validateConfig(opts?: { configPath?: string; envPath?: string })
   if (existsSync(configPath)) {
     try {
       const config = JSON.parse(readFileSync(configPath, "utf-8")) as Partial<Config>;
-      if (!config.repos || Object.keys(config.repos).length === 0) {
+      const hasGithubSync = config.github?.orgs && config.github.orgs.length > 0;
+      const hasWildcardUser = Object.values(config.users || {}).some(u => u.repos?.includes("*"));
+      if (!hasGithubSync && !hasWildcardUser && (!config.repos || Object.keys(config.repos).length === 0)) {
         issues.push("No repos configured");
       }
       if (!config.users || Object.keys(config.users).length === 0) {
@@ -236,23 +238,42 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
       }
     }
 
-    // Collect repos
+    // Collect repos — GitHub sync or manual
     const repos: Record<string, { url: string; defaultBranch: string }> = existingConfig.repos
       ? { ...existingConfig.repos }
       : {};
+    let githubOrgs: string[] = existingConfig.github?.orgs || [];
+    let useWildcard = false;
 
     if (needsRepos || needsConfigFile) {
-      let addMore = true;
-      while (addMore) {
-        process.stdout.write("\n  Add a repo:\n");
-        const name = await ask(rl, "Name");
-        if (!name) break;
-        const url = await ask(rl, "Git URL");
-        const branch = (await ask(rl, "Default branch [main]")) || "main";
-        repos[name] = { url, defaultBranch: branch };
+      const repoMode = await choose(rl, "How do you want to manage repos?", [
+        "Auto-discover from GitHub (uses gh CLI)",
+        "Add repos manually",
+        "Skip — add repos later via chat",
+      ]);
 
-        const again = await ask(rl, "Add another repo? (y/n)");
-        addMore = again.toLowerCase() === "y";
+      if (repoMode === 0) {
+        // GitHub auto-discovery
+        const orgs = await ask(rl, "GitHub orgs/users to sync (comma-separated, or empty for your repos)");
+        githubOrgs = orgs ? orgs.split(",").map(s => s.trim()).filter(Boolean) : [];
+        useWildcard = true;
+        process.stdout.write("  Repos will sync from GitHub on startup.\n");
+      } else if (repoMode === 1) {
+        let addMore = true;
+        while (addMore) {
+          process.stdout.write("\n  Add a repo:\n");
+          const name = await ask(rl, "Name");
+          if (!name) break;
+          const url = await ask(rl, "Git URL");
+          const branch = (await ask(rl, "Default branch [main]")) || "main";
+          repos[name] = { url, defaultBranch: branch };
+
+          const again = await ask(rl, "Add another repo? (y/n)");
+          addMore = again.toLowerCase() === "y";
+        }
+      } else {
+        useWildcard = true;
+        process.stdout.write("  You can add repos later: 'clone org/repo' in chat.\n");
       }
     }
 
@@ -260,7 +281,7 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
     const users: Record<string, { name: string; repos: string[] }> = existingConfig.users
       ? { ...existingConfig.users }
       : {};
-    const repoNames = Object.keys(repos);
+    const repoNames = useWildcard ? ["*"] : Object.keys(repos);
 
     if (needsUsers || needsConfigFile) {
       // Ask for user name once
@@ -378,6 +399,7 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
         repos,
         users,
         claude: existingConfig.claude || { maxTurns: 25 },
+        ...(githubOrgs.length > 0 ? { github: { orgs: githubOrgs } } : existingConfig.github ? { github: existingConfig.github } : {}),
         ...(existingConfig.mcpServers ? { mcpServers: existingConfig.mcpServers } : {}),
         ...(existingConfig.cron ? { cron: existingConfig.cron } : {}),
       };
