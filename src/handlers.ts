@@ -452,7 +452,7 @@ async function handleTaskMessage(msg: IncomingMessage, parsed: ParsedMessage, de
         }
       }
     } else {
-      const reply = "You don't have access to any repos yet. Set one up:\n`init repo <name> <git-url> [branch]`\nExample: `init repo my-app git@github.com:user/my-app.git`";
+      const reply = `No repos configured yet. Add one with:\n\`init repo <name> <git-url> [branch]\`\nExample: \`init repo my-app git@github.com:user/my-app.git\``;
       await msg.reply(reply);
       return;
     }
@@ -519,6 +519,13 @@ export function createMessageHandler(deps: HandlerDeps): (msg: IncomingMessage) 
     if (handler) {
       await handler();
       return;
+    }
+
+    // If user has no repos, fall back to discuss mode so they can still chat
+    const userRepos = getUserRepos(deps.config, msg.userId);
+    if (userRepos.length === 0) {
+      const history = deps.sessions.getHistory(msg.userId, 6);
+      return handleDiscuss(msg, { ...parsed, type: "discuss", args: { topic: parsed.rawText } }, history, deps);
     }
 
     // For all other types (free-form, review-pr, fix-issue, simplify, validate) — task dispatch

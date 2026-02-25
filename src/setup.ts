@@ -276,7 +276,7 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
         if (userId) users[`slack:${userId}`] = { name: userName || "user", repos: repoNames };
       }
       if (has("Telegram")) {
-        const userId = await ask(rl, "Your Telegram user ID");
+        const userId = await ask(rl, "Your Telegram user ID (send /start to @userinfobot to find it)");
         if (userId) users[`telegram:${userId}`] = { name: userName || "user", repos: repoNames };
       }
       if (has("Discord")) {

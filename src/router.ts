@@ -116,6 +116,46 @@ export function parseMessage(text: string): ParsedMessage {
     };
   }
 
+  // Natural language repo setup: "clone org/repo", "setup org/repo", "add org/repo"
+  const naturalRepoMatch = trimmed.match(/^(?:clone|setup|add|init|use)\s+(?:(?:the|repo)\s+)?([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)(?:\s+(?:repo(?:sitory)?))?\s*$/i);
+  if (naturalRepoMatch) {
+    const slug = naturalRepoMatch[1];
+    const name = slug.split("/").pop()!;
+    const url = `git@github.com:${slug}.git`;
+    return {
+      type: "init-repo",
+      args: { name, url, branch: "main" },
+      rawText: trimmed,
+    };
+  }
+
+  // Detect org/repo or GitHub URLs anywhere in a message that looks like a setup request
+  const setupIntent = /(?:clone|setup|add|init|use|start\s+(?:with|on)|work\s+(?:on|with))/i.test(lower);
+  if (setupIntent) {
+    const ghUrl = trimmed.match(/((?:git@github\.com:|https:\/\/github\.com\/)([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+?)(?:\.git)?)\b/);
+    if (ghUrl) {
+      const slug = ghUrl[2];
+      const name = slug.split("/").pop()!;
+      const url = ghUrl[1].endsWith(".git") ? ghUrl[1] : ghUrl[1] + ".git";
+      return {
+        type: "init-repo",
+        args: { name, url: url.startsWith("git@") ? url : `git@github.com:${slug}.git`, branch: "main" },
+        rawText: trimmed,
+      };
+    }
+    const slugMatch = trimmed.match(/\b([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)\b/);
+    if (slugMatch && slugMatch[1].indexOf("/") > 0) {
+      const slug = slugMatch[1];
+      const name = slug.split("/").pop()!;
+      const url = `git@github.com:${slug}.git`;
+      return {
+        type: "init-repo",
+        args: { name, url, branch: "main" },
+        rawText: trimmed,
+      };
+    }
+  }
+
   const repoHint = trimmed.match(/(?:in|on)\s+(\S+?)[?.!,]*\s*$/i);
   return { type: "free-form", repo: repoHint?.[1], args: {}, rawText: trimmed };
 }
