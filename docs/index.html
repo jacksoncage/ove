@@ -7,20 +7,22 @@
   <title>Ove — Your Grumpy Dev Companion</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Bitter:ital,wght@0,400;0,600;0,700;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;1,8..60,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     :root {
-      --base: #1a1714;
-      --surface: #232019;
-      --raised: #2c2822;
-      --copper: #c78d5e;
-      --copper-light: #e0a870;
-      --copper-dim: #8b6340;
-      --text: #d4cdc4;
-      --text-bright: #ede7df;
-      --muted: #8a7e72;
-      --subtle: #3a3430;
-      --red: #b85c4e;
+      --bg: #1a1a1a;
+      --bg-panel: #161616;
+      --bg-item: #1e1e1e;
+      --bg-item-hover: #252525;
+      --border: #2a2a2a;
+      --border-light: #333;
+      --text: #e0e0e0;
+      --text-dim: #777;
+      --text-muted: #555;
+      --accent: #8ab4f8;
+      --green: #4ade80;
+      --red: #f28b82;
+      --amber: #fbbf24;
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -28,23 +30,12 @@
     html { scroll-behavior: smooth; }
 
     body {
-      font-family: "Source Serif 4", Georgia, serif;
+      font-family: "Inter", system-ui, -apple-system, sans-serif;
       color: var(--text);
       line-height: 1.7;
-      background: var(--base);
-      font-size: 17px;
+      background: var(--bg);
+      font-size: 16px;
       -webkit-font-smoothing: antialiased;
-    }
-
-    /* Grain overlay */
-    body::after {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      opacity: 0.03;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-      z-index: 9999;
     }
 
     /* ─── HERO ─── */
