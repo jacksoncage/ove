@@ -79,6 +79,9 @@ export function loadConfig(): Config {
 export function getUserRepos(config: Config, platformUserId: string): string[] {
   const user = config.users[platformUserId];
   if (!user) return [];
+  // Known users with empty repos get wildcard access — avoids
+  // silently falling back to discuss-only mode with no tracing.
+  if (user.repos.length === 0) return ["*"];
   return user.repos;
 }
 
@@ -86,7 +89,8 @@ export function isAuthorized(config: Config, platformUserId: string, repo?: stri
   const user = config.users[platformUserId];
   if (!user) return false;
   if (!repo) return true;
-  return user.repos.includes("*") || user.repos.includes(repo);
+  // Empty repos = wildcard (same as getUserRepos)
+  return user.repos.length === 0 || user.repos.includes("*") || user.repos.includes(repo);
 }
 
 export function saveConfig(config: Config): void {

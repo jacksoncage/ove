@@ -60,6 +60,12 @@ describe("getUserRepos", () => {
     config.users["slack:U123"] = { name: "test", repos: ["a", "b"] };
     expect(getUserRepos(config, "slack:U123")).toEqual(["a", "b"]);
   });
+
+  it("returns wildcard for known user with empty repos", () => {
+    const config = loadConfig();
+    config.users["slack:U123"] = { name: "test", repos: [] };
+    expect(getUserRepos(config, "slack:U123")).toEqual(["*"]);
+  });
 });
 
 describe("saveConfig / addRepo / addUser", () => {
