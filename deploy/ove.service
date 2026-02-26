@@ -10,6 +10,7 @@ ExecStart=/path/to/bun run src/index.ts
 Restart=always
 RestartSec=5
 EnvironmentFile=/path/to/ove/.env
+Environment=PATH=/home/YOUR_USER/.local/bin:/home/YOUR_USER/.bun/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=multi-user.target

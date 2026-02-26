@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
 import type { Config } from "./config";
@@ -468,6 +468,18 @@ async function installSystemdService(rl: ReturnType<typeof createInterface>): Pr
   }
 
   const envPath = resolve(workDir, ".env");
+
+  // Build PATH that includes dirs for bun, claude, and gh
+  const pathDirs = new Set<string>();
+  for (const bin of [bunPath, "claude", "gh"]) {
+    let resolved = "";
+    try { resolved = execFileSync("which", [bin]).toString().trim(); } catch {}
+    if (resolved) pathDirs.add(dirname(resolved));
+  }
+  // Always include standard dirs
+  for (const d of ["/usr/local/bin", "/usr/bin", "/bin"]) pathDirs.add(d);
+  const pathLine = Array.from(pathDirs).join(":");
+
   const service = `[Unit]
 Description=Ove - Personal AI coding assistant
 After=network.target
@@ -480,6 +492,7 @@ ExecStart=${bunPath} run src/index.ts
 Restart=always
 RestartSec=5
 EnvironmentFile=${envPath}
+Environment=PATH=${pathLine}
 
 [Install]
 WantedBy=multi-user.target

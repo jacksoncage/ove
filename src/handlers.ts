@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { parseMessage, buildContextualPrompt } from "./router";
 import type { ParsedMessage } from "./router";
 import { isAuthorized, getUserRepos, addRepo, addUser } from "./config";
@@ -332,6 +333,7 @@ async function handleDiscuss(msg: IncomingMessage, parsed: ParsedMessage, histor
   await msg.updateStatus("Thinking...");
 
   try {
+    mkdirSync(deps.config.reposDir, { recursive: true });
     const discussRunner = deps.getRunner(deps.config.runner?.name);
     const result = await discussRunner.run(
       prompt,
