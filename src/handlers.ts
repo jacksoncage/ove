@@ -254,11 +254,19 @@ async function handleCancelTask(msg: IncomingMessage, args: Record<string, any>,
     const active = deps.queue.listActive();
     const pendingMatch = active.find((t) => t.id.toLowerCase().startsWith(prefix) && t.status === "pending");
     if (pendingMatch) {
+      if (pendingMatch.userId !== msg.userId) {
+        await msg.reply("That's not your task.");
+        return;
+      }
       deps.queue.cancel(pendingMatch.id);
       await msg.reply(`Cancelled pending task ${pendingMatch.id.slice(0, 7)} on ${pendingMatch.repo}.`);
       return;
     }
     await msg.reply(`No task found matching "${prefix}". Use /tasks to see what's running.`);
+    return;
+  }
+  if (match.task.userId !== msg.userId) {
+    await msg.reply("That's not your task.");
     return;
   }
   match.abort.abort();

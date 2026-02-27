@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
-import { join, extname } from "node:path";
+import { join, extname, resolve } from "node:path";
+import { timingSafeEqual } from "node:crypto";
 import type { EventAdapter, IncomingEvent, IncomingMessage, ChatAdapter, AdapterStatus } from "./types";
 import type { TraceStore } from "../trace";
 import type { TaskQueue } from "../queue";
@@ -11,6 +12,13 @@ interface PendingChat {
   replies: string[];
   statusText?: string;
   sseControllers: ReadableStreamDefaultController[];
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
 }
 
 export class HttpApiAdapter implements EventAdapter {
@@ -40,7 +48,7 @@ export class HttpApiAdapter implements EventAdapter {
     this.trace = trace;
     this.queue = queue || null;
     this.sessions = sessions || null;
-    const publicDir = join(import.meta.dir, "../../public");
+    const publicDir = resolve(import.meta.dir, "../../public");
     this.publicDir = publicDir;
     try {
       this.webUiHtml = readFileSync(join(publicDir, "index.html"), "utf-8");
@@ -114,7 +122,7 @@ export class HttpApiAdapter implements EventAdapter {
         // Auth check for API routes
         if (path.startsWith("/api/")) {
           const key = req.headers.get("X-API-Key") || url.searchParams.get("key");
-          if (key !== self.apiKey) {
+          if (!key || !safeEqual(key, self.apiKey)) {
             return Response.json({ error: "Unauthorized" }, { status: 401 });
           }
         }
@@ -159,9 +167,20 @@ export class HttpApiAdapter implements EventAdapter {
 
         // POST /api/message — submit a chat message (full chat pipeline)
         if (path === "/api/message" && req.method === "POST") {
-          const body = await req.json() as { text: string; userId?: string };
+          let body: { text: string };
+          try {
+            body = await req.json() as { text: string };
+          } catch {
+            return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+          }
+          if (!body || typeof body.text !== "string" || body.text.trim().length === 0) {
+            return Response.json({ error: "Missing or invalid 'text' field" }, { status: 400 });
+          }
+          if (body.text.length > 50000) {
+            return Response.json({ error: "Message too long (max 50000 chars)" }, { status: 400 });
+          }
           const chatId = crypto.randomUUID();
-          const userId = body.userId || "http:web";
+          const userId = "http:web";
 
           const chat: PendingChat = { status: "pending", replies: [], sseControllers: [] };
           self.chats.set(chatId, chat);
@@ -290,7 +309,10 @@ export class HttpApiAdapter implements EventAdapter {
         const MIME: Record<string, string> = { ".png": "image/png", ".ico": "image/x-icon", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".css": "text/css", ".js": "application/javascript" };
         const ext = extname(path);
         if (ext && MIME[ext]) {
-          const filePath = join(self.publicDir, path);
+          const filePath = resolve(self.publicDir, "." + path);
+          if (!filePath.startsWith(self.publicDir + "/")) {
+            return Response.json({ error: "Not found" }, { status: 404 });
+          }
           if (existsSync(filePath)) {
             const data = readFileSync(filePath);
             return new Response(data, { headers: { "Content-Type": MIME[ext], "Cache-Control": "public, max-age=3600" } });
