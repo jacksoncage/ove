@@ -426,7 +426,7 @@ describe("Full follow-up conversation flow", () => {
     const historyContext = history.length > 1
       ? "Recent conversation:\n" + history.slice(0, -1).map(m => `${m.role}: ${m.content}`).join("\n") + "\n\n"
       : "";
-    const resolvePrompt = `You are a repo-name resolver. ${historyContext}The user's latest message:\n"what about tomorrow"\n\nAvailable repos: iris, docs, my-app\n\nRespond with ONLY the repo name that best matches their request. Consider the conversation context if the current message doesn't mention a specific repo. Nothing else — just the exact repo name from the list. If you cannot determine which repo, respond with "UNKNOWN".`;
+    const resolvePrompt = `You are a repo-name resolver. ${historyContext}The user's latest message:\n"what about tomorrow"\n\nAvailable repos: iris, docs, my-app\n\nRespond with ONLY the repo name that best matches their request. Consider the conversation context if the current message doesn't mention a specific repo. Nothing else — just the exact repo name from the list. If the question doesn't need a specific repo (e.g. "list my open PRs", "what should I work on today", cross-repo queries, general questions about the user's GitHub activity), respond with "NONE". If you cannot determine which specific repo, respond with "UNKNOWN".`;
 
     expect(resolvePrompt).toContain("Recent conversation:");
     expect(resolvePrompt).toContain("check the roadmap on iris");

@@ -428,13 +428,20 @@ async function handleTaskMessage(msg: IncomingMessage, parsed: ParsedMessage, de
         const lastRepoHint = lastRepo && repoNames.includes(lastRepo)
           ? `The user's most recent task was on repo "${lastRepo}", but only use this if the conversation context supports it.\n\n`
           : "";
-        const resolvePrompt = `You are a repo-name resolver. ${historyContext}${lastRepoHint}The user's latest message:\n"${parsed.rawText}"\n\nAvailable repos: ${repoList}\n\nRespond with ONLY the repo name that best matches their request. Consider the conversation context if the current message doesn't mention a specific repo. Nothing else — just the exact repo name from the list. If you cannot determine which repo, respond with "UNKNOWN".`;
+        const resolvePrompt = `You are a repo-name resolver. ${historyContext}${lastRepoHint}The user's latest message:\n"${parsed.rawText}"\n\nAvailable repos: ${repoList}\n\nRespond with ONLY the repo name that best matches their request. Consider the conversation context if the current message doesn't mention a specific repo. Nothing else — just the exact repo name from the list. If the question doesn't need a specific repo (e.g. "list my open PRs", "what should I work on today", cross-repo queries, general questions about the user's GitHub activity), respond with "NONE". If you cannot determine which specific repo, respond with "UNKNOWN".`;
 
         await msg.updateStatus("Figuring out which repo...");
         try {
           const runner = deps.getRunner(deps.config.runner?.name);
           const result = await runner.run(resolvePrompt, deps.config.reposDir, { maxTurns: 1 });
           const resolved = result.output.trim().replace(/[`"']/g, "");
+
+          if (resolved === "NONE") {
+            // Question doesn't need a specific repo — handle via discuss mode (has gh CLI access)
+            logger.info("repo resolver returned NONE — falling back to discuss", { userText: parsed.rawText.slice(0, 80) });
+            const history = deps.sessions.getHistory(msg.userId, 6);
+            return handleDiscuss(msg, { ...parsed, type: "free-form" }, history, deps);
+          }
 
           if (resolved === "UNKNOWN" || !repoNames.includes(resolved)) {
             const reply = `Which repo? I see ${repoNames.length} repos. Some matches: ${repoNames.slice(0, 10).join(", ")}${repoNames.length > 10 ? "..." : ""}.\nSay it again with 'on <repo>'.`;
