@@ -15,6 +15,14 @@ Talk to Ove from Slack, WhatsApp, Telegram, Discord, GitHub issues, a Web UI, or
 
 **Just chat.** You don't need to memorize commands. Talk to Ove like you'd talk to a colleague — ask questions, describe what you need, paste error messages, think out loud. He understands natural language. The commands below are shortcuts, not requirements.
 
+### Web UI
+
+![Ove Web UI](screenshot-chat.png)
+
+### Trace Viewer
+
+![Ove Trace Viewer](screenshot-trace.png)
+
 ## Quick Start
 
 ```bash
