@@ -76,20 +76,68 @@ export function splitAndReply(text: string, platform: string): string[] {
   return parts;
 }
 
+function getUserRepoNames(userId: string, deps: HandlerDeps): string[] {
+  const userRepos = getUserRepos(deps.config, userId);
+  if (userRepos.includes("*")) return deps.repoRegistry.getAllNames();
+  return userRepos;
+}
+
 function resolveRepo(userId: string, hint: string | undefined, deps: HandlerDeps): string | null {
   if (hint && deps.getRepoInfo(hint)) return hint;
-
-  const userRepos = getUserRepos(deps.config, userId);
-  const hasWildcard = userRepos.includes("*");
-
-  if (!hasWildcard && userRepos.length === 1) return userRepos[0];
-
-  if (hasWildcard || userRepos.length > 1) {
-    const repoNames = hasWildcard ? deps.repoRegistry.getAllNames() : userRepos;
-    if (repoNames.length === 1) return repoNames[0];
-  }
-
+  const repoNames = getUserRepoNames(userId, deps);
+  if (repoNames.length === 1) return repoNames[0];
   return null;
+}
+
+type RepoResolution =
+  | { kind: "resolved"; repo: string }
+  | { kind: "none" }
+  | { kind: "unknown"; repoNames: string[] }
+  | { kind: "error"; message: string };
+
+async function resolveRepoWithLLM(
+  userId: string,
+  rawText: string,
+  hint: string | undefined,
+  deps: HandlerDeps,
+  onStatus?: (text: string) => void,
+): Promise<RepoResolution> {
+  if (hint && deps.getRepoInfo(hint)) return { kind: "resolved", repo: hint };
+
+  const repoNames = getUserRepoNames(userId, deps);
+  if (repoNames.length === 0) return { kind: "error", message: "No repos discovered yet. Set one up with `init repo <name> <git-url>` or configure GitHub sync." };
+  if (repoNames.length === 1) return { kind: "resolved", repo: repoNames[0] };
+
+  const history = deps.sessions.getHistory(userId, 6);
+  const recentTasks = deps.queue.listByUser(userId, 5);
+  const lastRepo = recentTasks.find(t => t.status === "completed" || t.status === "failed")?.repo;
+  const historyContext = history.length > 1
+    ? "Recent conversation:\n" + history.slice(0, -1).map(m => `${m.role}: ${m.content}`).join("\n") + "\n\n"
+    : "";
+  const lastRepoHint = lastRepo && repoNames.includes(lastRepo)
+    ? `The user's most recent task was on repo "${lastRepo}", but only use this if the conversation context supports it.\n\n`
+    : "";
+  const resolvePrompt = `You are a repo-name resolver. ${historyContext}${lastRepoHint}The user's latest message:\n"${rawText}"\n\nAvailable repos: ${repoNames.join(", ")}\n\nRespond with ONLY the repo name that best matches their request. Consider the conversation context if the current message doesn't mention a specific repo. Nothing else — just the exact repo name from the list. If the question doesn't need a specific repo (e.g. "list my open PRs", "what should I work on today", cross-repo queries, general questions about the user's GitHub activity), respond with "NONE". If you cannot determine which specific repo, respond with "UNKNOWN".`;
+
+  onStatus?.("Figuring out which repo...");
+  try {
+    const runner = deps.getRunner(deps.config.runner?.name);
+    const result = await runner.run(resolvePrompt, deps.config.reposDir, { maxTurns: 1 });
+    const resolved = result.output.trim().replace(/[`"']/g, "");
+
+    if (resolved === "NONE") {
+      logger.info("repo resolver returned NONE — falling back to discuss", { userText: rawText.slice(0, 80) });
+      return { kind: "none" };
+    }
+    if (resolved === "UNKNOWN" || !repoNames.includes(resolved)) {
+      return { kind: "unknown", repoNames };
+    }
+
+    logger.info("repo resolved via LLM", { resolved, userText: rawText.slice(0, 80) });
+    return { kind: "resolved", repo: resolved };
+  } catch (err) {
+    return { kind: "error", message: `Couldn't figure out the repo: ${String(err).slice(0, 300)}` };
+  }
 }
 
 // --- Individual command handlers ---
@@ -284,8 +332,7 @@ async function handleTrace(msg: IncomingMessage, args: Record<string, any>, deps
 
 async function handleSchedule(msg: IncomingMessage, parsedRepo: string | undefined, deps: HandlerDeps) {
   await msg.updateStatus("Parsing your schedule...");
-  const rawRepos = getUserRepos(deps.config, msg.userId);
-  const userRepos = rawRepos.includes("*") ? deps.repoRegistry.getAllNames() : rawRepos;
+  const userRepos = getUserRepoNames(msg.userId, deps);
 
   if (userRepos.length === 0) {
     await msg.reply("You don't have access to any repos. Set one up first with `init repo <name> <git-url>`.");
@@ -396,81 +443,35 @@ async function handleInitRepo(msg: IncomingMessage, args: Record<string, any>, d
 }
 
 async function handleTaskMessage(msg: IncomingMessage, parsed: ParsedMessage, deps: HandlerDeps) {
-  // If the repo hint doesn't match a known repo, clear it and let auto-resolution handle it
-  if (parsed.repo && !deps.getRepoInfo(parsed.repo)) {
-    parsed.repo = undefined;
-  }
+  const hint = parsed.repo && deps.getRepoInfo(parsed.repo) ? parsed.repo : undefined;
+  const resolution = await resolveRepoWithLLM(msg.userId, parsed.rawText, hint, deps, (text) => msg.updateStatus(text));
 
-  if (!parsed.repo) {
-    const userRepos = getUserRepos(deps.config, msg.userId);
-    const hasWildcard = userRepos.includes("*");
-
-    if (!hasWildcard && userRepos.length === 1) {
-      parsed.repo = userRepos[0];
-    } else if (hasWildcard || userRepos.length > 1) {
-      const repoNames = hasWildcard ? deps.repoRegistry.getAllNames() : userRepos;
-
-      if (repoNames.length === 1) {
-        parsed.repo = repoNames[0];
-      } else if (repoNames.length === 0) {
-        const reply = "No repos discovered yet. Set one up with `init repo <name> <git-url>` or configure GitHub sync.";
-        await msg.reply(reply);
-        return;
-      } else {
-        // Resolve repo via LLM using conversation context
-        const repoList = repoNames.join(", ");
-        const history = deps.sessions.getHistory(msg.userId, 6);
-        const recentTasks = deps.queue.listByUser(msg.userId, 5);
-        const lastRepo = recentTasks.find(t => t.status === "completed" || t.status === "failed")?.repo;
-        const historyContext = history.length > 1
-          ? "Recent conversation:\n" + history.slice(0, -1).map(m => `${m.role}: ${m.content}`).join("\n") + "\n\n"
-          : "";
-        const lastRepoHint = lastRepo && repoNames.includes(lastRepo)
-          ? `The user's most recent task was on repo "${lastRepo}", but only use this if the conversation context supports it.\n\n`
-          : "";
-        const resolvePrompt = `You are a repo-name resolver. ${historyContext}${lastRepoHint}The user's latest message:\n"${parsed.rawText}"\n\nAvailable repos: ${repoList}\n\nRespond with ONLY the repo name that best matches their request. Consider the conversation context if the current message doesn't mention a specific repo. Nothing else — just the exact repo name from the list. If the question doesn't need a specific repo (e.g. "list my open PRs", "what should I work on today", cross-repo queries, general questions about the user's GitHub activity), respond with "NONE". If you cannot determine which specific repo, respond with "UNKNOWN".`;
-
-        await msg.updateStatus("Figuring out which repo...");
-        try {
-          const runner = deps.getRunner(deps.config.runner?.name);
-          const result = await runner.run(resolvePrompt, deps.config.reposDir, { maxTurns: 1 });
-          const resolved = result.output.trim().replace(/[`"']/g, "");
-
-          if (resolved === "NONE") {
-            // Question doesn't need a specific repo — handle via discuss mode (has gh CLI access)
-            logger.info("repo resolver returned NONE — falling back to discuss", { userText: parsed.rawText.slice(0, 80) });
-            const history = deps.sessions.getHistory(msg.userId, 6);
-            return handleDiscuss(msg, { ...parsed, type: "free-form" }, history, deps);
-          }
-
-          if (resolved === "UNKNOWN" || !repoNames.includes(resolved)) {
-            const reply = `Which repo? I see ${repoNames.length} repos. Some matches: ${repoNames.slice(0, 10).join(", ")}${repoNames.length > 10 ? "..." : ""}.\nSay it again with 'on <repo>'.`;
-            await msg.reply(reply);
-            deps.sessions.addMessage(msg.userId, "assistant", reply);
-            return;
-          }
-
-          parsed.repo = resolved;
-          logger.info("repo resolved via LLM", { resolved, userText: parsed.rawText.slice(0, 80) });
-        } catch (err) {
-          await msg.reply(`Couldn't figure out the repo: ${String(err).slice(0, 300)}`);
-          return;
-        }
-      }
-    } else {
-      const reply = `No repos configured yet. Add one with:\n\`init repo <name> <git-url> [branch]\`\nExample: \`init repo my-app git@github.com:user/my-app.git\``;
+  switch (resolution.kind) {
+    case "none": {
+      const history = deps.sessions.getHistory(msg.userId, 6);
+      return handleDiscuss(msg, { ...parsed, type: "free-form" }, history, deps);
+    }
+    case "unknown": {
+      const { repoNames } = resolution;
+      const reply = `Which repo? I see ${repoNames.length} repos. Some matches: ${repoNames.slice(0, 10).join(", ")}${repoNames.length > 10 ? "..." : ""}.\nSay it again with 'on <repo>'.`;
       await msg.reply(reply);
+      deps.sessions.addMessage(msg.userId, "assistant", reply);
+      return;
+    }
+    case "error": {
+      await msg.reply(resolution.message);
       return;
     }
   }
+
+  parsed.repo = resolution.repo;
 
   if (!isAuthorized(deps.config, msg.userId, parsed.repo)) {
     await msg.reply(`Not authorized for ${parsed.repo}.`);
     return;
   }
 
-  const repoInfo = deps.getRepoInfo(parsed.repo);
-  if (!repoInfo) {
+  if (!deps.getRepoInfo(parsed.repo)) {
     await msg.reply(`Unknown repo: ${parsed.repo}`);
     return;
   }
