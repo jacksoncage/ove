@@ -1,0 +1,16 @@
+docs/
+logo.png
+*.png
+*.db
+*.db-shm
+*.db-wal
+repos/
+.github/
+.dockerignore
+docker-compose.yml
+Dockerfile
+bun.lock
+bunfig.toml
+.env
+config.json
+.claude/settings.local.json

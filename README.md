@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" width="180" alt="Ove" />
+  <img src="https://raw.githubusercontent.com/jacksoncage/ove/main/logo.png" width="180" alt="Ove" />
 </p>
 
 <h1 align="center">Ove</h1>
@@ -16,16 +16,16 @@ Talk to Ove from Slack, WhatsApp, Telegram, Discord, GitHub issues, a Web UI, or
 **Just chat.** You don't need to memorize commands. Talk to Ove like you'd talk to a colleague — ask questions, describe what you need, paste error messages, think out loud. He understands natural language. The commands below are shortcuts, not requirements.
 
 <p align="center">
-  <img src="docs/images/screenshot-telegram.png" width="320" alt="Ove on Telegram" />
+  <img src="https://raw.githubusercontent.com/jacksoncage/ove/main/docs/images/screenshot-telegram.png" width="320" alt="Ove on Telegram" />
 </p>
 
 ### Web UI
 
-![Ove Web UI](docs/images/screenshot-chat.png)
+![Ove Web UI](https://raw.githubusercontent.com/jacksoncage/ove/main/docs/images/screenshot-chat.png)
 
 ### Trace Viewer
 
-![Ove Trace Viewer](docs/images/screenshot-trace.png)
+![Ove Trace Viewer](https://raw.githubusercontent.com/jacksoncage/ove/main/docs/images/screenshot-trace.png)
 
 ## Quick Start
 
