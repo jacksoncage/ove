@@ -77,4 +77,25 @@ describe("smoke test: full message flow", () => {
     expect(task).not.toBeNull();
     expect(task!.prompt).toContain("auth middleware");
   });
+
+  it("mode switch changes persona in prompts", () => {
+    const db = new Database(":memory:");
+    const sessions = new SessionStore(db);
+
+    // Default mode
+    expect(sessions.getMode("slack:U123")).toBe("strict");
+
+    // Switch to assistant
+    sessions.setMode("slack:U123", "assistant");
+    expect(sessions.getMode("slack:U123")).toBe("assistant");
+
+    // Verify parseMessage detects mode commands
+    const modeCmd = parseMessage("mode assistant");
+    expect(modeCmd.type).toBe("set-mode");
+    expect(modeCmd.args.mode).toBe("assistant");
+
+    // Switch back
+    sessions.setMode("slack:U123", "strict");
+    expect(sessions.getMode("slack:U123")).toBe("strict");
+  });
 });
