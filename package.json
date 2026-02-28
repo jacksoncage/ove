@@ -1,6 +1,6 @@
 {
   "name": "@lovenyberg/ove",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Your grumpy but meticulous dev companion. AI coding agent for Slack, WhatsApp, Telegram, Discord, GitHub, HTTP API, and CLI.",
   "type": "module",
   "bin": {
