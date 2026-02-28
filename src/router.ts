@@ -16,7 +16,8 @@ export type MessageType =
   | "remove-schedule"
   | "list-tasks"
   | "cancel-task"
-  | "trace";
+  | "trace"
+  | "set-mode";
 
 export interface ParsedMessage {
   type: MessageType;
@@ -48,6 +49,25 @@ export function parseMessage(text: string): ParsedMessage {
 
   const traceMatch = trimmed.match(/^(?:\/)?trace(?:\s+(\S+))?$/i);
   if (traceMatch) return { type: "trace", args: { taskId: traceMatch[1] }, rawText: trimmed };
+
+  // Mode switching — explicit commands
+  const modeMatch = trimmed.match(/^(?:\/)?mode\s+(assistant|strict)$/i);
+  if (modeMatch) {
+    return { type: "set-mode", args: { mode: modeMatch[1].toLowerCase() }, rawText: trimmed };
+  }
+
+  // Mode switching — natural language for assistant mode
+  if (/^(?:assistant|yolo)\s+mode$/i.test(lower) ||
+      /^be\s+more\s+helpful$/i.test(lower) ||
+      /^help\s+me\s+with\s+(?:anything|everything)$/i.test(lower)) {
+    return { type: "set-mode", args: { mode: "assistant" }, rawText: trimmed };
+  }
+
+  // Mode switching — natural language for strict mode
+  if (/^(?:strict|code|normal)\s+mode$/i.test(lower) ||
+      /^back\s+to\s+(?:normal|code|strict)$/i.test(lower)) {
+    return { type: "set-mode", args: { mode: "strict" }, rawText: trimmed };
+  }
 
   // Natural language status inquiries — short messages asking about progress
   if (isStatusInquiry(lower)) return { type: "status", args: {}, rawText: trimmed };

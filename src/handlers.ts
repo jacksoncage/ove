@@ -6,7 +6,7 @@ import { parseSchedule } from "./schedule-parser";
 import { logger } from "./logger";
 import type { Config } from "./config";
 import type { TaskQueue, Task } from "./queue";
-import type { SessionStore } from "./sessions";
+import type { SessionStore, UserMode } from "./sessions";
 import type { ScheduleStore } from "./schedules";
 import type { RepoRegistry } from "./repo-registry";
 import type { IncomingMessage, EventAdapter, IncomingEvent } from "./adapters/types";
@@ -41,6 +41,19 @@ Personality traits:
 Keep the personality subtle in code output — don't let it interfere with code quality. The grumpiness goes in your commentary, not in the code itself. When doing code reviews or fixes, be thorough and meticulous like Ove would be.`;
 
 export { OVE_PERSONA };
+
+const ASSISTANT_ADDENDUM = `IMPORTANT MODE OVERRIDE: You are currently in "assistant mode". The user has asked you to be a general-purpose assistant. While you keep your Ove personality (grumble, be direct, sprinkle Swedish), you are now willing to help with ANY request — not just code. This includes:
+- Sending reminders, drafting emails/messages
+- Answering general knowledge questions
+- Helping with personal tasks, recommendations
+- Anything the user asks
+
+You still grumble about it ("Fan, nu ska jag vara sekreterare också...") but you DO the task. If you genuinely cannot do something (no tool/integration available), explain what would be needed rather than just refusing.`;
+
+function getPersona(userId: string, deps: HandlerDeps): string {
+  const mode = deps.sessions.getMode(userId);
+  return mode === "assistant" ? OVE_PERSONA + "\n\n" + ASSISTANT_ADDENDUM : OVE_PERSONA;
+}
 
 const PLATFORM_FORMAT_HINTS: Record<string, string> = {
   telegram: "Format output for Telegram: use *bold* for emphasis, `code` for inline code, ```code blocks```. No markdown tables. Use simple bulleted lists with • instead. Keep it concise.",
@@ -147,6 +160,26 @@ async function handleClear(msg: IncomingMessage, deps: HandlerDeps) {
   await msg.reply("Conversation cleared.");
 }
 
+async function handleSetMode(msg: IncomingMessage, args: Record<string, any>, deps: HandlerDeps) {
+  const mode = args.mode;
+  if (mode !== "assistant" && mode !== "strict") {
+    await msg.reply(`Unknown mode "${String(mode)}". Use "mode assistant" or "mode strict".`);
+    return;
+  }
+  try {
+    deps.sessions.setMode(msg.userId, mode);
+  } catch (err) {
+    logger.error("failed to set user mode", { userId: msg.userId, mode, error: String(err) });
+    await msg.reply("Failed to save mode. Try again.");
+    return;
+  }
+  const reply = mode === "assistant"
+    ? "Mja, fine. Assistant mode. Jag hjälper dig med vad du vill. Men klaga inte om resultatet."
+    : "Back to code mode. Äntligen. Riktigt arbete.";
+  await msg.reply(reply);
+  deps.sessions.addMessage(msg.userId, "assistant", reply);
+}
+
 async function handleStatus(msg: IncomingMessage, deps: HandlerDeps) {
   const userTasks = deps.queue.listByUser(msg.userId, 5);
   const running = userTasks.find((t) => t.status === "running");
@@ -199,6 +232,8 @@ async function handleHelp(msg: IncomingMessage, deps: HandlerDeps) {
     "• tasks — see running and pending tasks",
     "• cancel <id> — kill a running or pending task",
     "• trace [task-id] — see what happened step by step",
+    "• mode assistant — I'll (reluctantly) help with anything",
+    "• mode strict — back to code-only (default)",
     "• status / history / clear",
     "• <task> every day/weekday at <time> [on <repo>] — schedule a recurring task",
     "• list schedules — see your scheduled tasks",
@@ -383,7 +418,7 @@ async function handleSchedule(msg: IncomingMessage, parsedRepo: string | undefin
 }
 
 async function handleDiscuss(msg: IncomingMessage, parsed: ParsedMessage, history: { role: string; content: string }[], deps: HandlerDeps) {
-  const prompt = buildContextualPrompt(parsed, history, OVE_PERSONA);
+  const prompt = buildContextualPrompt(parsed, history, getPersona(msg.userId, deps));
 
   await msg.updateStatus("Thinking...");
 
@@ -413,7 +448,7 @@ async function handleDiscuss(msg: IncomingMessage, parsed: ParsedMessage, histor
 
 async function handleCreateProject(msg: IncomingMessage, parsed: ParsedMessage, history: { role: string; content: string }[], deps: HandlerDeps) {
   const projectName = parsed.args.name;
-  const prompt = buildContextualPrompt(parsed, history, OVE_PERSONA);
+  const prompt = buildContextualPrompt(parsed, history, getPersona(msg.userId, deps));
 
   const taskId = deps.queue.enqueue({
     userId: msg.userId,
@@ -485,7 +520,7 @@ async function handleTaskMessage(msg: IncomingMessage, parsed: ParsedMessage, de
   }
 
   const history = deps.sessions.getHistory(msg.userId, 6);
-  const prompt = buildContextualPrompt(parsed, history, OVE_PERSONA);
+  const prompt = buildContextualPrompt(parsed, history, getPersona(msg.userId, deps));
 
   const taskId = deps.queue.enqueue({
     userId: msg.userId,
@@ -515,6 +550,7 @@ export function createMessageHandler(deps: HandlerDeps): (msg: IncomingMessage) 
       "help": () => handleHelp(msg, deps),
       "list-tasks": () => handleListTasks(msg, deps),
       "cancel-task": () => handleCancelTask(msg, parsed.args, deps),
+      "set-mode": () => handleSetMode(msg, parsed.args, deps),
       "trace": () => handleTrace(msg, parsed.args, deps),
       "list-schedules": () => handleListSchedules(msg, deps),
       "remove-schedule": () => handleRemoveSchedule(msg, parsed.args, deps),
@@ -580,7 +616,7 @@ export function createEventHandler(deps: HandlerDeps): (event: IncomingEvent, ad
       return;
     }
 
-    const prompt = buildContextualPrompt(parsed, [], OVE_PERSONA);
+    const prompt = buildContextualPrompt(parsed, [], getPersona(event.userId, deps));
     const taskId = deps.queue.enqueue({
       userId: event.userId,
       repo: parsed.repo,

@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 
+export type UserMode = "strict" | "assistant";
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -27,6 +29,13 @@ export class SessionStore {
       )
     `);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_chat_user ON chat_history(user_id)`);
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS user_modes (
+        user_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
   }
 
   addMessage(userId: string, role: "user" | "assistant", content: string) {
@@ -55,7 +64,25 @@ export class SessionStore {
       }));
   }
 
+  getMode(userId: string): UserMode {
+    const row = this.db
+      .query(`SELECT mode FROM user_modes WHERE user_id = ?`)
+      .get(userId) as { mode: string } | null;
+    if (!row) return "strict";
+    if (row.mode === "assistant" || row.mode === "strict") return row.mode;
+    return "strict";
+  }
+
+  setMode(userId: string, mode: UserMode): void {
+    this.db.run(
+      `INSERT INTO user_modes (user_id, mode, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET mode = excluded.mode, updated_at = excluded.updated_at`,
+      [userId, mode, new Date().toISOString()]
+    );
+  }
+
   clear(userId: string) {
     this.db.run(`DELETE FROM chat_history WHERE user_id = ?`, [userId]);
+    this.db.run(`DELETE FROM user_modes WHERE user_id = ?`, [userId]);
   }
 }

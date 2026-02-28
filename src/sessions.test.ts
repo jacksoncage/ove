@@ -42,4 +42,45 @@ describe("SessionStore", () => {
     store.clear("slack:U123");
     expect(store.getHistory("slack:U123").length).toBe(0);
   });
+
+  describe("user modes", () => {
+    it("returns 'strict' as default mode", () => {
+      const mode = store.getMode("slack:U123");
+      expect(mode).toBe("strict");
+    });
+
+    it("stores and retrieves a mode", () => {
+      store.setMode("slack:U123", "assistant");
+      expect(store.getMode("slack:U123")).toBe("assistant");
+    });
+
+    it("upserts mode (overwrites previous)", () => {
+      store.setMode("slack:U123", "assistant");
+      store.setMode("slack:U123", "strict");
+      expect(store.getMode("slack:U123")).toBe("strict");
+    });
+
+    it("keeps separate modes per user", () => {
+      store.setMode("slack:U1", "assistant");
+      store.setMode("slack:U2", "strict");
+      expect(store.getMode("slack:U1")).toBe("assistant");
+      expect(store.getMode("slack:U2")).toBe("strict");
+    });
+
+    it("resets mode when session is cleared", () => {
+      store.setMode("slack:U123", "assistant");
+      store.clear("slack:U123");
+      expect(store.getMode("slack:U123")).toBe("strict");
+    });
+
+    it("falls back to strict for unexpected values in database", () => {
+      // Simulate a corrupted/unexpected value by writing directly to SQLite
+      const db = (store as any).db as Database;
+      db.run(
+        `INSERT INTO user_modes (user_id, mode, updated_at) VALUES (?, ?, ?)`,
+        ["slack:U999", "banana", new Date().toISOString()]
+      );
+      expect(store.getMode("slack:U999")).toBe("strict");
+    });
+  });
 });
