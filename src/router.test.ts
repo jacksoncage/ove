@@ -260,6 +260,73 @@ describe("parseMessage", () => {
   });
 });
 
+describe("set-mode parsing", () => {
+  it("parses 'mode assistant'", () => {
+    const result = parseMessage("mode assistant");
+    expect(result.type).toBe("set-mode");
+    expect(result.args.mode).toBe("assistant");
+  });
+
+  it("parses 'mode strict'", () => {
+    const result = parseMessage("mode strict");
+    expect(result.type).toBe("set-mode");
+    expect(result.args.mode).toBe("strict");
+  });
+
+  it("parses '/mode assistant'", () => {
+    const result = parseMessage("/mode assistant");
+    expect(result.type).toBe("set-mode");
+    expect(result.args.mode).toBe("assistant");
+  });
+
+  it("parses 'assistant mode'", () => {
+    const result = parseMessage("assistant mode");
+    expect(result.type).toBe("set-mode");
+    expect(result.args.mode).toBe("assistant");
+  });
+
+  it("parses 'yolo mode'", () => {
+    const result = parseMessage("yolo mode");
+    expect(result.type).toBe("set-mode");
+    expect(result.args.mode).toBe("assistant");
+  });
+
+  it("parses 'be more helpful'", () => {
+    const result = parseMessage("be more helpful");
+    expect(result.type).toBe("set-mode");
+    expect(result.args.mode).toBe("assistant");
+  });
+
+  it("parses 'help me with anything'", () => {
+    const result = parseMessage("help me with anything");
+    expect(result.type).toBe("set-mode");
+    expect(result.args.mode).toBe("assistant");
+  });
+
+  it("parses 'strict mode'", () => {
+    const result = parseMessage("strict mode");
+    expect(result.type).toBe("set-mode");
+    expect(result.args.mode).toBe("strict");
+  });
+
+  it("parses 'code mode'", () => {
+    const result = parseMessage("code mode");
+    expect(result.type).toBe("set-mode");
+    expect(result.args.mode).toBe("strict");
+  });
+
+  it("parses 'back to normal'", () => {
+    const result = parseMessage("back to normal");
+    expect(result.type).toBe("set-mode");
+    expect(result.args.mode).toBe("strict");
+  });
+
+  it("does NOT match 'help me fix a bug on my-app' as set-mode", () => {
+    const result = parseMessage("help me fix a bug on my-app");
+    expect(result.type).not.toBe("set-mode");
+  });
+});
+
 describe("buildPrompt", () => {
   it("builds review-pr prompt", () => {
     const prompt = buildPrompt({ type: "review-pr", repo: "my-app", args: { prNumber: 42 }, rawText: "" });
