@@ -161,8 +161,18 @@ async function handleClear(msg: IncomingMessage, deps: HandlerDeps) {
 }
 
 async function handleSetMode(msg: IncomingMessage, args: Record<string, any>, deps: HandlerDeps) {
-  const mode = args.mode as string;
-  deps.sessions.setMode(msg.userId, mode as UserMode);
+  const mode = args.mode;
+  if (mode !== "assistant" && mode !== "strict") {
+    await msg.reply(`Unknown mode "${String(mode)}". Use "mode assistant" or "mode strict".`);
+    return;
+  }
+  try {
+    deps.sessions.setMode(msg.userId, mode);
+  } catch (err) {
+    logger.error("failed to set user mode", { userId: msg.userId, mode, error: String(err) });
+    await msg.reply("Failed to save mode. Try again.");
+    return;
+  }
   const reply = mode === "assistant"
     ? "Mja, fine. Assistant mode. Jag hjälper dig med vad du vill. Men klaga inte om resultatet."
     : "Back to code mode. Äntligen. Riktigt arbete.";

@@ -72,5 +72,15 @@ describe("SessionStore", () => {
       store.clear("slack:U123");
       expect(store.getMode("slack:U123")).toBe("strict");
     });
+
+    it("falls back to strict for unexpected values in database", () => {
+      // Simulate a corrupted/unexpected value by writing directly to SQLite
+      const db = (store as any).db as Database;
+      db.run(
+        `INSERT INTO user_modes (user_id, mode, updated_at) VALUES (?, ?, ?)`,
+        ["slack:U999", "banana", new Date().toISOString()]
+      );
+      expect(store.getMode("slack:U999")).toBe("strict");
+    });
   });
 });

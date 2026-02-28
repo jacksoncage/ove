@@ -1,9 +1,10 @@
 import { describe, it, expect } from "bun:test";
 import { Database } from "bun:sqlite";
-import { parseMessage, buildPrompt } from "./router";
+import { parseMessage, buildPrompt, buildContextualPrompt } from "./router";
 import { TaskQueue } from "./queue";
 import { ClaudeRunner } from "./runners/claude";
 import { SessionStore } from "./sessions";
+import { OVE_PERSONA } from "./handlers";
 
 describe("smoke test: full message flow", () => {
   it("routes a PR review through the full pipeline", () => {
@@ -81,21 +82,29 @@ describe("smoke test: full message flow", () => {
   it("mode switch changes persona in prompts", () => {
     const db = new Database(":memory:");
     const sessions = new SessionStore(db);
+    const parsed = parseMessage("explain the auth flow");
 
-    // Default mode
-    expect(sessions.getMode("slack:U123")).toBe("strict");
+    // Default mode — prompt should NOT contain assistant addendum
+    const strictPrompt = buildContextualPrompt(parsed, [], OVE_PERSONA);
+    expect(strictPrompt).toContain("grumpy");
+    expect(strictPrompt).not.toContain("IMPORTANT MODE OVERRIDE");
 
-    // Switch to assistant
+    // Switch to assistant — prompt should contain the addendum
     sessions.setMode("slack:U123", "assistant");
     expect(sessions.getMode("slack:U123")).toBe("assistant");
+
+    const assistantPersona = OVE_PERSONA + "\n\n" + "IMPORTANT MODE OVERRIDE";
+    const assistantPrompt = buildContextualPrompt(parsed, [], assistantPersona);
+    expect(assistantPrompt).toContain("IMPORTANT MODE OVERRIDE");
+    expect(assistantPrompt).toContain("grumpy");
+
+    // Switch back — verify storage round-trips
+    sessions.setMode("slack:U123", "strict");
+    expect(sessions.getMode("slack:U123")).toBe("strict");
 
     // Verify parseMessage detects mode commands
     const modeCmd = parseMessage("mode assistant");
     expect(modeCmd.type).toBe("set-mode");
     expect(modeCmd.args.mode).toBe("assistant");
-
-    // Switch back
-    sessions.setMode("slack:U123", "strict");
-    expect(sessions.getMode("slack:U123")).toBe("strict");
   });
 });
