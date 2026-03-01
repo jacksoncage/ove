@@ -126,11 +126,10 @@ export interface GhRepoParsed {
 export function parseGhRepoLine(line: string): GhRepoParsed | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
-  // gh repo list output: owner/name\tdescription\tvisibility\tupdated_at
   const fullName = trimmed.split("\t")[0];
   if (!fullName || !fullName.includes("/")) return null;
   const [owner, ...rest] = fullName.split("/");
-  const name = rest.join("/"); // handle potential edge cases
+  const name = rest.join("/");
   return { name, owner, fullName };
 }
 
@@ -171,7 +170,6 @@ export async function syncGitHub(
       try {
         repos = JSON.parse(output);
       } catch {
-        // JSON parsing failed — log and skip this org
         logger.warn("gh repo list returned invalid JSON", { org });
         continue;
       }

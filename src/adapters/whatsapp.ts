@@ -43,7 +43,6 @@ export class WhatsAppAdapter implements ChatAdapter {
 
     this.sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
       if (connection) this.connectionState = connection as "open" | "close" | "connecting";
-      // Request pairing code when server is ready (sends qr event)
       if (qr && this.phoneNumber && !pairingRequested) {
         pairingRequested = true;
         try {
@@ -82,17 +81,14 @@ export class WhatsAppAdapter implements ChatAdapter {
       for (const waMsg of messages) {
         if (!waMsg.message) continue;
 
-        // Skip messages sent by the bot (replies/status updates)
         const msgId = waMsg.key.id;
         if (msgId && this.sentByBot.has(msgId)) {
           this.sentByBot.delete(msgId);
           continue;
         }
 
-        // Skip messages from others (not our phone) — we only process our own commands
         if (!waMsg.key.fromMe) continue;
 
-        // Only process messages in whitelisted chats (if configured)
         if (this.allowedChats.size > 0) {
           const jid = waMsg.key.remoteJid;
           if (!jid) continue;
@@ -108,13 +104,11 @@ export class WhatsAppAdapter implements ChatAdapter {
         const jid = waMsg.key.remoteJid;
         if (!jid) continue;
 
-        // For fromMe messages, use our configured phone number
         const phone = waMsg.key.fromMe
           ? (this.phoneNumber?.replace(/[^0-9]/g, "") ?? jid.split("@")[0])
           : jid.split("@")[0];
         const userId = `whatsapp:${phone}`;
 
-        // Batch status updates: at most once per 10 seconds
         let lastSentAt = 0;
         let pendingStatus: string | null = null;
         let batchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -134,7 +128,6 @@ export class WhatsAppAdapter implements ChatAdapter {
           platform: "whatsapp",
           text,
           reply: async (replyText: string) => {
-            // Flush any pending status before sending final reply
             if (batchTimer) {
               clearTimeout(batchTimer);
               batchTimer = null;
@@ -164,10 +157,12 @@ export class WhatsAppAdapter implements ChatAdapter {
   }
 
   getStatus(): AdapterStatus {
-    let status: AdapterStatus["status"] = "unknown";
-    if (this.connectionState === "open") status = "connected";
-    else if (this.connectionState === "close") status = "disconnected";
-    else if (this.connectionState === "connecting") status = this.reconnectAttempt > 0 ? "degraded" : "unknown";
+    let status: AdapterStatus["status"];
+    switch (this.connectionState) {
+      case "open": status = "connected"; break;
+      case "close": status = "disconnected"; break;
+      default: status = this.reconnectAttempt > 0 ? "degraded" : "unknown"; break;
+    }
 
     return {
       name: "whatsapp",

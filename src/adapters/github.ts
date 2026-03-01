@@ -11,7 +11,6 @@ interface GitHubComment {
   id: number;
   body: string;
   user: { login: string };
-  created_at: string;
   html_url: string;
 }
 
@@ -36,9 +35,9 @@ export class GitHubAdapter implements EventAdapter {
   async start(onEvent: (event: IncomingEvent) => void): Promise<void> {
     this.onEvent = onEvent;
 
-    // Do an initial poll to seed seenCommentIds (don't process old mentions)
     for (const repo of this.repos) {
-      await this.seedRepo(repo);
+      const comments = await this.fetchRecentComments(repo);
+      for (const c of comments) this.seenCommentIds.add(c.id);
     }
 
     this.pollTimer = setInterval(() => this.pollAll(), this.pollIntervalMs);
@@ -48,9 +47,9 @@ export class GitHubAdapter implements EventAdapter {
   }
 
   getStatus(): AdapterStatus {
-    let status: AdapterStatus["status"] = "disconnected";
-    if (this.started && !this.lastPollError) status = "connected";
-    else if (this.started && this.lastPollError) status = "degraded";
+    const status: AdapterStatus["status"] = !this.started
+      ? "disconnected"
+      : this.lastPollError ? "degraded" : "connected";
 
     return {
       name: "github",
@@ -69,7 +68,6 @@ export class GitHubAdapter implements EventAdapter {
   }
 
   async respondToEvent(eventId: string, text: string): Promise<void> {
-    // eventId format: "github:<owner/repo>:<issue|pr>:<number>"
     const parts = eventId.split(":");
     if (parts.length < 4) return;
     const repo = parts[1];
@@ -83,13 +81,6 @@ export class GitHubAdapter implements EventAdapter {
       await proc.exited;
     } catch (err) {
       logger.error("failed to post github comment", { eventId, error: String(err) });
-    }
-  }
-
-  private async seedRepo(repo: string): Promise<void> {
-    const comments = await this.fetchRecentComments(repo);
-    for (const c of comments) {
-      this.seenCommentIds.add(c.id);
     }
   }
 
@@ -114,13 +105,11 @@ export class GitHubAdapter implements EventAdapter {
       if (this.seenCommentIds.has(comment.id)) continue;
       this.seenCommentIds.add(comment.id);
 
-      // Skip own comments
       if (comment.user.login === this.botName) continue;
 
       const text = parseMention(comment.body, this.botName);
       if (!text) continue;
 
-      // Parse issue/PR number from html_url
       const urlMatch = comment.html_url.match(/\/(issues|pull)\/(\d+)/);
       if (!urlMatch) continue;
 

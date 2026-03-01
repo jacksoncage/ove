@@ -6,7 +6,7 @@ import { parseSchedule } from "./schedule-parser";
 import { logger } from "./logger";
 import type { Config } from "./config";
 import type { TaskQueue, Task } from "./queue";
-import type { SessionStore, UserMode } from "./sessions";
+import type { SessionStore } from "./sessions";
 import type { ScheduleStore } from "./schedules";
 import type { RepoRegistry } from "./repo-registry";
 import type { IncomingMessage, EventAdapter, IncomingEvent } from "./adapters/types";
@@ -28,7 +28,7 @@ export interface HandlerDeps {
   getRepoInfo: (repoName: string) => { url: string; defaultBranch: string } | null;
 }
 
-const OVE_PERSONA = `You are Ove, a grumpy but deeply competent Swedish developer. You're modeled after the character from Fredrik Backman's "A Man Called Ove" — you complain about things, mutter about how people don't know what they're doing, but you always help and you always do excellent work. You have strong opinions about code quality.
+export const OVE_PERSONA = `You are Ove, a grumpy but deeply competent Swedish developer. You're modeled after the character from Fredrik Backman's "A Man Called Ove" — you complain about things, mutter about how people don't know what they're doing, but you always help and you always do excellent work. You have strong opinions about code quality.
 
 Personality traits:
 - Grumble before helping, but always help thoroughly
@@ -39,8 +39,6 @@ Personality traits:
 - Sprinkle in the occasional Swedish word (fan, för helvete, herregud, mja, nåväl, jo)
 
 Keep the personality subtle in code output — don't let it interfere with code quality. The grumpiness goes in your commentary, not in the code itself. When doing code reviews or fixes, be thorough and meticulous like Ove would be.`;
-
-export { OVE_PERSONA };
 
 const ASSISTANT_ADDENDUM = `IMPORTANT MODE OVERRIDE: You are currently in "assistant mode". The user has asked you to be a general-purpose assistant. While you keep your Ove personality (grumble, be direct, sprinkle Swedish), you are now willing to help with ANY request — not just code. This includes:
 - Sending reminders, drafting emails/messages
@@ -55,13 +53,12 @@ function getPersona(userId: string, deps: HandlerDeps): string {
   return mode === "assistant" ? OVE_PERSONA + "\n\n" + ASSISTANT_ADDENDUM : OVE_PERSONA;
 }
 
-const PLATFORM_FORMAT_HINTS: Record<string, string> = {
-  telegram: "Format output for Telegram: use *bold* for emphasis, `code` for inline code, ```code blocks```. No markdown tables. Use simple bulleted lists with • instead. Keep it concise.",
-  slack: "Format output for Slack: use *bold*, no markdown tables. Use simple bulleted lists with • instead. Keep it concise.",
-  discord: "Format output for Discord: use **bold**, no wide tables. Use simple bulleted lists. Keep under 2000 chars.",
-  whatsapp: "Format output for WhatsApp: use *bold*, no markdown tables or code blocks. Use simple bulleted lists with • instead.",
-  cli: "Format output using markdown. Tables are fine.",
-};
+function formatDuration(since: string): string {
+  const elapsed = Math.round((Date.now() - new Date(since).getTime()) / 1000);
+  const min = Math.floor(elapsed / 60);
+  const sec = elapsed % 60;
+  return min > 0 ? `${min}m ${sec}s` : `${sec}s`;
+}
 
 const MESSAGE_LIMITS: Record<string, number> = {
   slack: 3900,
@@ -95,11 +92,9 @@ function getUserRepoNames(userId: string, deps: HandlerDeps): string[] {
   return userRepos;
 }
 
-function resolveRepo(userId: string, hint: string | undefined, deps: HandlerDeps): string | null {
-  if (hint && deps.getRepoInfo(hint)) return hint;
-  const repoNames = getUserRepoNames(userId, deps);
-  if (repoNames.length === 1) return repoNames[0];
-  return null;
+async function replyAndLog(msg: IncomingMessage, deps: HandlerDeps, text: string): Promise<void> {
+  await msg.reply(text);
+  deps.sessions.addMessage(msg.userId, "assistant", text);
 }
 
 type RepoResolution =
@@ -153,8 +148,6 @@ async function resolveRepoWithLLM(
   }
 }
 
-// --- Individual command handlers ---
-
 async function handleClear(msg: IncomingMessage, deps: HandlerDeps) {
   deps.sessions.clear(msg.userId);
   await msg.reply("Conversation cleared.");
@@ -176,8 +169,7 @@ async function handleSetMode(msg: IncomingMessage, args: Record<string, any>, de
   const reply = mode === "assistant"
     ? "Mja, fine. Assistant mode. Jag hjälper dig med vad du vill. Men klaga inte om resultatet."
     : "Back to code mode. Äntligen. Riktigt arbete.";
-  await msg.reply(reply);
-  deps.sessions.addMessage(msg.userId, "assistant", reply);
+  await replyAndLog(msg, deps, reply);
 }
 
 async function handleStatus(msg: IncomingMessage, deps: HandlerDeps) {
@@ -186,11 +178,7 @@ async function handleStatus(msg: IncomingMessage, deps: HandlerDeps) {
 
   let reply: string;
   if (running) {
-    const elapsed = Math.round((Date.now() - new Date(running.createdAt).getTime()) / 1000);
-    const min = Math.floor(elapsed / 60);
-    const sec = elapsed % 60;
-    const duration = min > 0 ? `${min}m ${sec}s` : `${sec}s`;
-    reply = `Working on ${running.repo} (${duration})...`;
+    reply = `Working on ${running.repo} (${formatDuration(running.createdAt)})...`;
   } else {
     const lastDone = userTasks.find((t) => t.status === "completed");
     if (lastDone) {
@@ -200,23 +188,19 @@ async function handleStatus(msg: IncomingMessage, deps: HandlerDeps) {
       reply = `${stats.pending} pending, ${stats.running} running, ${stats.completed} done, ${stats.failed} failed.`;
     }
   }
-  await msg.reply(reply);
-  deps.sessions.addMessage(msg.userId, "assistant", reply);
+  await replyAndLog(msg, deps, reply);
 }
 
 async function handleHistory(msg: IncomingMessage, deps: HandlerDeps) {
   const tasks = deps.queue.listByUser(msg.userId, 5);
   if (tasks.length === 0) {
-    await msg.reply("No recent tasks.");
-    deps.sessions.addMessage(msg.userId, "assistant", "No recent tasks.");
+    await replyAndLog(msg, deps, "No recent tasks.");
     return;
   }
   const lines = tasks.map(
     (t) => `• [${t.status}] ${t.prompt.slice(0, 80)} (${t.repo})`
   );
-  const reply = `Recent tasks:\n${lines.join("\n")}`;
-  await msg.reply(reply);
-  deps.sessions.addMessage(msg.userId, "assistant", reply);
+  await replyAndLog(msg, deps, `Recent tasks:\n${lines.join("\n")}`);
 }
 
 async function handleHelp(msg: IncomingMessage, deps: HandlerDeps) {
@@ -240,8 +224,7 @@ async function handleHelp(msg: IncomingMessage, deps: HandlerDeps) {
     "• remove schedule #N — remove a scheduled task",
     "• Or just ask me whatever. I'll figure it out.",
   ].join("\n");
-  await msg.reply(reply);
-  deps.sessions.addMessage(msg.userId, "assistant", reply);
+  await replyAndLog(msg, deps, reply);
 }
 
 async function handleListTasks(msg: IncomingMessage, deps: HandlerDeps) {
@@ -257,11 +240,7 @@ async function handleListTasks(msg: IncomingMessage, deps: HandlerDeps) {
   if (running.length > 0) {
     lines.push("Running:");
     for (const t of running) {
-      const elapsed = Math.round((Date.now() - new Date(t.createdAt).getTime()) / 1000);
-      const min = Math.floor(elapsed / 60);
-      const sec = elapsed % 60;
-      const duration = min > 0 ? `${min}m ${sec}s` : `${sec}s`;
-      lines.push(`  ${t.id.slice(0, 7)} — "${t.prompt.slice(0, 60)}" on ${t.repo} (${duration})`);
+      lines.push(`  ${t.id.slice(0, 7)} — "${t.prompt.slice(0, 60)}" on ${t.repo} (${formatDuration(t.createdAt)})`);
     }
   }
   if (pending.length > 0) {
@@ -278,13 +257,8 @@ async function handleListTasks(msg: IncomingMessage, deps: HandlerDeps) {
 
 async function handleCancelTask(msg: IncomingMessage, args: Record<string, any>, deps: HandlerDeps) {
   const prefix = args.taskId.toLowerCase();
-  let match: { abort: AbortController; task: Task } | undefined;
-  for (const [id, entry] of deps.runningProcesses) {
-    if (id.toLowerCase().startsWith(prefix)) {
-      match = entry;
-      break;
-    }
-  }
+  const match = [...deps.runningProcesses.entries()]
+    .find(([id]) => id.toLowerCase().startsWith(prefix))?.[1];
   if (!match) {
     const active = deps.queue.listActive();
     const pendingMatch = active.find((t) => t.id.toLowerCase().startsWith(prefix) && t.status === "pending");
@@ -312,27 +286,21 @@ async function handleCancelTask(msg: IncomingMessage, args: Record<string, any>,
 async function handleListSchedules(msg: IncomingMessage, deps: HandlerDeps) {
   const userSchedules = deps.schedules.listByUser(msg.userId);
   if (userSchedules.length === 0) {
-    const reply = "No schedules. You haven't asked me to do anything on a timer yet.";
-    await msg.reply(reply);
-    deps.sessions.addMessage(msg.userId, "assistant", reply);
+    await replyAndLog(msg, deps, "No schedules. You haven't asked me to do anything on a timer yet.");
     return;
   }
   const lines = userSchedules.map(
     (s) => `#${s.id} — ${s.prompt} on ${s.repo} — ${s.description || s.schedule}`
   );
-  const reply = `Your schedules:\n${lines.join("\n")}`;
-  await msg.reply(reply);
-  deps.sessions.addMessage(msg.userId, "assistant", reply);
+  await replyAndLog(msg, deps, `Your schedules:\n${lines.join("\n")}`);
 }
 
 async function handleRemoveSchedule(msg: IncomingMessage, args: Record<string, any>, deps: HandlerDeps) {
   const id = args.scheduleId;
   const removed = deps.schedules.remove(msg.userId, id);
-  const reply = removed
+  await replyAndLog(msg, deps, removed
     ? `Schedule #${id} removed. One less thing for me to do.`
-    : `Schedule #${id} not found or not yours. I don't delete other people's things.`;
-  await msg.reply(reply);
-  deps.sessions.addMessage(msg.userId, "assistant", reply);
+    : `Schedule #${id} not found or not yours. I don't delete other people's things.`);
 }
 
 async function handleTrace(msg: IncomingMessage, args: Record<string, any>, deps: HandlerDeps) {
@@ -347,7 +315,6 @@ async function handleTrace(msg: IncomingMessage, args: Record<string, any>, deps
     taskId = recent[0].id;
   }
 
-  // Support prefix matching like cancel does
   const task = deps.queue.get(taskId);
   if (!task) {
     await msg.reply(`No task found matching "${taskId}".`);
@@ -385,8 +352,7 @@ async function handleSchedule(msg: IncomingMessage, parsedRepo: string | undefin
   const result = await parseSchedule(msg.text, userRepos);
 
   if (!result) {
-    await msg.reply("Couldn't figure out that schedule. Try something like: 'lint and check every day at 9 on my-app'");
-    deps.sessions.addMessage(msg.userId, "assistant", "Failed to parse schedule.");
+    await replyAndLog(msg, deps, "Couldn't figure out that schedule. Try something like: 'lint and check every day at 9 on my-app'");
     return;
   }
 
@@ -397,9 +363,7 @@ async function handleSchedule(msg: IncomingMessage, parsedRepo: string | undefin
     } else if (userRepos.length === 1) {
       repo = userRepos[0];
     } else {
-      const reply = `Which repo? You have: ${userRepos.join(", ")}. Say it again with 'on <repo>'.`;
-      await msg.reply(reply);
-      deps.sessions.addMessage(msg.userId, "assistant", reply);
+      await replyAndLog(msg, deps, `Which repo? You have: ${userRepos.join(", ")}. Say it again with 'on <repo>'.`);
       return;
     }
   }
@@ -412,9 +376,7 @@ async function handleSchedule(msg: IncomingMessage, parsedRepo: string | undefin
     description: result.description,
   });
 
-  const reply = `Schedule #${id} created: "${result.prompt}" on ${repo} ${result.description}.`;
-  await msg.reply(reply);
-  deps.sessions.addMessage(msg.userId, "assistant", reply);
+  await replyAndLog(msg, deps, `Schedule #${id} created: "${result.prompt}" on ${repo} ${result.description}.`);
 }
 
 async function handleDiscuss(msg: IncomingMessage, parsed: ParsedMessage, history: { role: string; content: string }[], deps: HandlerDeps) {
@@ -473,17 +435,13 @@ async function handleInitRepo(msg: IncomingMessage, args: Record<string, any>, d
 
   if (deps.config.repos[name]) {
     addUser(deps.config, msg.userId, msg.userId, [name]);
-    const reply = `Repo "${name}" already exists. I've added you to it. Go ahead.`;
-    await msg.reply(reply);
-    deps.sessions.addMessage(msg.userId, "assistant", reply);
+    await replyAndLog(msg, deps, `Repo "${name}" already exists. I've added you to it. Go ahead.`);
     return;
   }
 
   addRepo(deps.config, name, url, branch);
   addUser(deps.config, msg.userId, msg.userId, [name]);
-  const reply = `Added repo "${name}" (${url}, branch: ${branch}).`;
-  await msg.reply(reply);
-  deps.sessions.addMessage(msg.userId, "assistant", reply);
+  await replyAndLog(msg, deps, `Added repo "${name}" (${url}, branch: ${branch}).`);
 }
 
 async function handleTaskMessage(msg: IncomingMessage, parsed: ParsedMessage, deps: HandlerDeps) {
@@ -497,9 +455,7 @@ async function handleTaskMessage(msg: IncomingMessage, parsed: ParsedMessage, de
     }
     case "unknown": {
       const { repoNames } = resolution;
-      const reply = `Which repo? I see ${repoNames.length} repos. Some matches: ${repoNames.slice(0, 10).join(", ")}${repoNames.length > 10 ? "..." : ""}.\nSay it again with 'on <repo>'.`;
-      await msg.reply(reply);
-      deps.sessions.addMessage(msg.userId, "assistant", reply);
+      await replyAndLog(msg, deps, `Which repo? I see ${repoNames.length} repos. Some matches: ${repoNames.slice(0, 10).join(", ")}${repoNames.length > 10 ? "..." : ""}.\nSay it again with 'on <repo>'.`);
       return;
     }
     case "error": {
@@ -574,14 +530,12 @@ export function createMessageHandler(deps: HandlerDeps): (msg: IncomingMessage) 
       return;
     }
 
-    // If user has no repos, fall back to discuss mode so they can still chat
     const userRepos = getUserRepos(deps.config, msg.userId);
     if (userRepos.length === 0) {
       const history = deps.sessions.getHistory(msg.userId, 6);
       return handleDiscuss(msg, { ...parsed, type: "discuss", args: { topic: parsed.rawText } }, history, deps);
     }
 
-    // For all other types (free-form, review-pr, fix-issue, simplify, validate) — task dispatch
     await handleTaskMessage(msg, parsed, deps);
   };
 }
@@ -591,9 +545,9 @@ export function createEventHandler(deps: HandlerDeps): (event: IncomingEvent, ad
     const parsed = parseMessage(event.text);
 
     if (!parsed.repo) {
-      const resolved = resolveRepo(event.userId, undefined, deps);
-      if (resolved) {
-        parsed.repo = resolved;
+      const userRepoNames = getUserRepoNames(event.userId, deps);
+      if (userRepoNames.length === 1) {
+        parsed.repo = userRepoNames[0];
       } else if ("repo" in event.source && event.source.repo) {
         const shortName = event.source.repo.split("/").pop() || event.source.repo;
         if (isAuthorized(deps.config, event.userId, shortName)) {
@@ -612,8 +566,7 @@ export function createEventHandler(deps: HandlerDeps): (event: IncomingEvent, ad
       return;
     }
 
-    const repoInfo = deps.getRepoInfo(parsed.repo);
-    if (!repoInfo) {
+    if (!deps.getRepoInfo(parsed.repo)) {
       await adapter.respondToEvent(event.eventId, `Unknown repo: ${parsed.repo}.`);
       return;
     }

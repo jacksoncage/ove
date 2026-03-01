@@ -29,7 +29,6 @@ export class DiscordAdapter implements ChatAdapter {
     this.client.on("messageCreate", async (discordMsg: Message) => {
       if (discordMsg.author.bot) return;
 
-      // Respond to DMs or @mentions
       const isDM = !discordMsg.guild;
       const isMention = discordMsg.mentions.has(this.client.user!);
       if (!isDM && !isMention) return;

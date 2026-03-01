@@ -5,11 +5,6 @@ import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
 import type { Config } from "./config";
 
-interface ValidationResult {
-  valid: boolean;
-  issues: string[];
-}
-
 export interface DiagnosticResult {
   name: string;
   status: "pass" | "fail" | "warn";
@@ -52,26 +47,19 @@ export async function runDiagnostics(config: Config, deps: DiagnosticDeps = defa
     results.push({ name: "git", status: "fail", message: "git not found" });
   }
 
-  // Check runner CLI installed (claude or codex)
-  const runnerName = config.runner?.name || "claude";
-  const runnerCmd = runnerName === "codex" ? "codex" : "claude";
-  const runnerPath = deps.which(runnerCmd);
-  if (runnerPath) {
-    results.push({ name: runnerCmd, status: "pass", message: `${runnerCmd} CLI installed` });
-  } else {
-    results.push({ name: runnerCmd, status: "fail", message: `${runnerCmd} CLI not found` });
-  }
+  const runnerCmd = config.runner?.name === "codex" ? "codex" : "claude";
+  results.push(deps.which(runnerCmd)
+    ? { name: runnerCmd, status: "pass", message: `${runnerCmd} CLI installed` }
+    : { name: runnerCmd, status: "fail", message: `${runnerCmd} CLI not found` }
+  );
 
-  // Check gh CLI installed (if GitHub sync configured)
-  const hasGitHubSync = !!(config.github?.orgs && config.github.orgs.length > 0);
-  const hasGitHubPoll = !!process.env.GITHUB_POLL_REPOS;
-  if (hasGitHubSync || hasGitHubPoll) {
+  const needsGh = (config.github?.orgs && config.github.orgs.length > 0) || process.env.GITHUB_POLL_REPOS;
+  if (needsGh) {
     const ghPath = deps.which("gh");
-    if (ghPath) {
-      results.push({ name: "gh", status: "pass", message: "gh CLI installed" });
-    } else {
-      results.push({ name: "gh", status: "warn", message: "gh CLI not found (GitHub sync will not work)" });
-    }
+    results.push(ghPath
+      ? { name: "gh", status: "pass", message: "gh CLI installed" }
+      : { name: "gh", status: "warn", message: "gh CLI not found (GitHub sync will not work)" }
+    );
   }
 
   // Check SSH access to GitHub
@@ -106,56 +94,40 @@ export async function runDiagnostics(config: Config, deps: DiagnosticDeps = defa
   }
 
   // Check bot token validity via API calls
-  const slackToken = process.env.SLACK_BOT_TOKEN;
-  if (slackToken && slackToken !== "xoxb-...") {
-    try {
-      const res = await deps.fetch("https://slack.com/api/auth.test", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${slackToken}`, "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(5000),
-      });
-      const data = await res.json() as { ok: boolean };
-      if (data.ok) {
-        results.push({ name: "slack", status: "pass", message: "Slack bot token is valid" });
-      } else {
-        results.push({ name: "slack", status: "fail", message: "Slack bot token is invalid" });
-      }
-    } catch {
-      results.push({ name: "slack", status: "warn", message: "Could not verify Slack bot token (network error)" });
-    }
-  }
+  const tokenChecks: { token: string | undefined; name: string; label: string; url: string; init?: RequestInit; checkBody?: boolean }[] = [
+    {
+      token: process.env.SLACK_BOT_TOKEN !== "xoxb-..." ? process.env.SLACK_BOT_TOKEN : undefined,
+      name: "slack", label: "Slack",
+      url: "https://slack.com/api/auth.test",
+      init: { method: "POST", headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`, "Content-Type": "application/json" } },
+      checkBody: true,
+    },
+    {
+      token: process.env.TELEGRAM_BOT_TOKEN,
+      name: "telegram", label: "Telegram",
+      url: `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getMe`,
+      checkBody: true,
+    },
+    {
+      token: process.env.DISCORD_BOT_TOKEN,
+      name: "discord", label: "Discord",
+      url: "https://discord.com/api/v10/users/@me",
+      init: { headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` } },
+    },
+  ];
 
-  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
-  if (telegramToken) {
+  for (const check of tokenChecks) {
+    if (!check.token) continue;
     try {
-      const res = await deps.fetch(`https://api.telegram.org/bot${telegramToken}/getMe`, {
-        signal: AbortSignal.timeout(5000),
+      const res = await deps.fetch(check.url, { ...check.init, signal: AbortSignal.timeout(5000) });
+      const ok = check.checkBody ? ((await res.json()) as { ok: boolean }).ok : res.ok;
+      results.push({
+        name: check.name,
+        status: ok ? "pass" : "fail",
+        message: `${check.label} bot token is ${ok ? "valid" : "invalid"}`,
       });
-      const data = await res.json() as { ok: boolean };
-      if (data.ok) {
-        results.push({ name: "telegram", status: "pass", message: "Telegram bot token is valid" });
-      } else {
-        results.push({ name: "telegram", status: "fail", message: "Telegram bot token is invalid" });
-      }
     } catch {
-      results.push({ name: "telegram", status: "warn", message: "Could not verify Telegram bot token (network error)" });
-    }
-  }
-
-  const discordToken = process.env.DISCORD_BOT_TOKEN;
-  if (discordToken) {
-    try {
-      const res = await deps.fetch("https://discord.com/api/v10/users/@me", {
-        headers: { Authorization: `Bot ${discordToken}` },
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.ok) {
-        results.push({ name: "discord", status: "pass", message: "Discord bot token is valid" });
-      } else {
-        results.push({ name: "discord", status: "fail", message: "Discord bot token is invalid" });
-      }
-    } catch {
-      results.push({ name: "discord", status: "warn", message: "Could not verify Discord bot token (network error)" });
+      results.push({ name: check.name, status: "warn", message: `Could not verify ${check.label} bot token (network error)` });
     }
   }
 
@@ -169,7 +141,7 @@ export function printDiagnostics(results: DiagnosticResult[]): void {
   }
 }
 
-export function validateConfig(opts?: { configPath?: string; envPath?: string }): ValidationResult {
+export function validateConfig(opts?: { configPath?: string; envPath?: string }): { valid: boolean; issues: string[] } {
   const configPath = opts?.configPath || process.env.CONFIG_PATH || "./config.json";
   const envPath = opts?.envPath || "./.env";
   const issues: string[] = [];
@@ -254,12 +226,12 @@ function loadEnvFile(envPath: string): Record<string, string> {
   }
 }
 
-export async function ask(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
+async function ask(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
   const answer = await rl.question(`  ${question}: `);
   return answer.trim();
 }
 
-export async function choose(rl: ReturnType<typeof createInterface>, question: string, options: string[]): Promise<number> {
+async function choose(rl: ReturnType<typeof createInterface>, question: string, options: string[]): Promise<number> {
   process.stdout.write(`\n  ${question}\n`);
   for (let i = 0; i < options.length; i++) {
     process.stdout.write(`    ${i + 1}. ${options[i]}\n`);
@@ -272,7 +244,7 @@ export async function choose(rl: ReturnType<typeof createInterface>, question: s
   return choice - 1;
 }
 
-export async function chooseMulti(rl: ReturnType<typeof createInterface>, question: string, options: string[]): Promise<number[]> {
+async function chooseMulti(rl: ReturnType<typeof createInterface>, question: string, options: string[]): Promise<number[]> {
   process.stdout.write(`\n  ${question} (comma-separated, e.g. 1,3,5)\n`);
   for (let i = 0; i < options.length; i++) {
     process.stdout.write(`    ${i + 1}. ${options[i]}\n`);
@@ -483,70 +455,26 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
     if (needsEnvFile || needsTokens || !fixing) {
       const envLines: string[] = [];
 
-      // Slack
-      if (has("Slack")) {
-        envLines.push("# Slack (Socket Mode)");
-        envLines.push(`SLACK_BOT_TOKEN=${envValues.SLACK_BOT_TOKEN || "xoxb-..."}`);
-        envLines.push(`SLACK_APP_TOKEN=${envValues.SLACK_APP_TOKEN || "xapp-..."}`);
+      const envSections: { guard: boolean; comment: string; vars: Record<string, string> }[] = [
+        { guard: has("Slack"), comment: "# Slack (Socket Mode)", vars: { SLACK_BOT_TOKEN: envValues.SLACK_BOT_TOKEN || "xoxb-...", SLACK_APP_TOKEN: envValues.SLACK_APP_TOKEN || "xapp-..." } },
+        { guard: has("Telegram"), comment: "# Telegram", vars: { TELEGRAM_BOT_TOKEN: envValues.TELEGRAM_BOT_TOKEN || "" } },
+        { guard: has("Discord"), comment: "# Discord", vars: { DISCORD_BOT_TOKEN: envValues.DISCORD_BOT_TOKEN || "" } },
+        { guard: has("WhatsApp"), comment: "# WhatsApp", vars: { WHATSAPP_ENABLED: "true" } },
+        { guard: has("HTTP API"), comment: "# HTTP API + Web UI", vars: { HTTP_API_PORT: envValues.HTTP_API_PORT || "3000", HTTP_API_HOST: envValues.HTTP_API_HOST || "127.0.0.1", HTTP_API_KEY: envValues.HTTP_API_KEY || "" } },
+        { guard: has("GitHub"), comment: "# GitHub", vars: { GITHUB_POLL_REPOS: envValues.GITHUB_POLL_REPOS || "", GITHUB_BOT_NAME: envValues.GITHUB_BOT_NAME || "ove" } },
+        { guard: has("CLI"), comment: "# CLI mode", vars: { CLI_MODE: "true" } },
+        { guard: !!envValues.OVE_TRACE, comment: "# Tracing", vars: { OVE_TRACE: envValues.OVE_TRACE } },
+        { guard: true, comment: "# Repos directory", vars: { REPOS_DIR: envValues.REPOS_DIR || "./repos" } },
+      ];
+
+      for (const section of envSections) {
+        if (!section.guard) continue;
+        envLines.push(section.comment);
+        for (const [key, val] of Object.entries(section.vars)) {
+          envLines.push(`${key}=${val}`);
+        }
         envLines.push("");
       }
-
-      // Telegram
-      if (has("Telegram")) {
-        envLines.push("# Telegram");
-        envLines.push(`TELEGRAM_BOT_TOKEN=${envValues.TELEGRAM_BOT_TOKEN || ""}`);
-        envLines.push("");
-      }
-
-      // Discord
-      if (has("Discord")) {
-        envLines.push("# Discord");
-        envLines.push(`DISCORD_BOT_TOKEN=${envValues.DISCORD_BOT_TOKEN || ""}`);
-        envLines.push("");
-      }
-
-      // WhatsApp
-      if (has("WhatsApp")) {
-        envLines.push("# WhatsApp");
-        envLines.push(`WHATSAPP_ENABLED=true`);
-        envLines.push("");
-      }
-
-      // HTTP API
-      if (has("HTTP API")) {
-        envLines.push("# HTTP API + Web UI");
-        envLines.push(`HTTP_API_PORT=${envValues.HTTP_API_PORT || "3000"}`);
-        envLines.push(`HTTP_API_HOST=${envValues.HTTP_API_HOST || "127.0.0.1"}`);
-        envLines.push(`HTTP_API_KEY=${envValues.HTTP_API_KEY || ""}`);
-        envLines.push("");
-      }
-
-      // GitHub
-      if (has("GitHub")) {
-        envLines.push("# GitHub");
-        envLines.push(`GITHUB_POLL_REPOS=${envValues.GITHUB_POLL_REPOS || ""}`);
-        envLines.push(`GITHUB_BOT_NAME=${envValues.GITHUB_BOT_NAME || "ove"}`);
-        envLines.push("");
-      }
-
-      // CLI
-      if (has("CLI")) {
-        envLines.push("# CLI mode");
-        envLines.push("CLI_MODE=true");
-        envLines.push("");
-      }
-
-      // Tracing
-      if (envValues.OVE_TRACE) {
-        envLines.push("# Tracing");
-        envLines.push(`OVE_TRACE=${envValues.OVE_TRACE}`);
-        envLines.push("");
-      }
-
-      // Always include repos dir
-      envLines.push("# Repos directory");
-      envLines.push(`REPOS_DIR=${envValues.REPOS_DIR || "./repos"}`);
-      envLines.push("");
 
       writeFileSync(envPath, envLines.join("\n") + "\n");
       process.stdout.write("\n  Wrote .env\n");
@@ -554,28 +482,23 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
 
     // Write config.json
     if (needsConfigFile || needsRepos || needsUsers || !fixing) {
+      const github = githubOrgs.length > 0 ? { orgs: githubOrgs } : existingConfig.github;
       const config = {
         repos,
         users,
         claude: existingConfig.claude || { maxTurns: 25 },
-        ...(githubOrgs.length > 0 ? { github: { orgs: githubOrgs } } : existingConfig.github ? { github: existingConfig.github } : {}),
-        ...(existingConfig.mcpServers ? { mcpServers: existingConfig.mcpServers } : {}),
-        ...(existingConfig.cron ? { cron: existingConfig.cron } : {}),
+        ...(github && { github }),
+        ...(existingConfig.mcpServers && { mcpServers: existingConfig.mcpServers }),
+        ...(existingConfig.cron && { cron: existingConfig.cron }),
       };
       writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
       process.stdout.write("  Wrote config.json\n");
     }
 
-    // Systemd service setup
-    let installedSystemd = false;
     if (!fixing) {
       const installService = await ask(rl, "Install as systemd service? (y/n)");
-      if (installService.toLowerCase() === "y") {
-        installedSystemd = await installSystemdService(rl);
-      }
-    }
+      const installedSystemd = installService.toLowerCase() === "y" && await installSystemdService(rl);
 
-    if (!fixing) {
       process.stdout.write("\n  Nåväl.\n");
       if (installedSystemd) {
         process.stdout.write("\n  Useful commands:\n");
@@ -607,15 +530,14 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
   }
 }
 
+function whichSync(cmd: string): string {
+  try { return execFileSync("which", [cmd]).toString().trim(); } catch { return ""; }
+}
+
 async function installSystemdService(rl: ReturnType<typeof createInterface>): Promise<boolean> {
   const detectedUser = userInfo().username;
   const detectedDir = resolve(".");
-  let detectedBun = "";
-  try {
-    detectedBun = execFileSync("which", ["bun"]).toString().trim();
-  } catch {
-    // bun not in PATH
-  }
+  const detectedBun = whichSync("bun");
 
   const user = (await ask(rl, `User [${detectedUser}]`)) || detectedUser;
   const workDir = (await ask(rl, `Working directory [${detectedDir}]`)) || detectedDir;
@@ -628,15 +550,11 @@ async function installSystemdService(rl: ReturnType<typeof createInterface>): Pr
 
   const envPath = resolve(workDir, ".env");
 
-  // Build PATH that includes dirs for bun, claude, and gh
-  const pathDirs = new Set<string>();
+  const pathDirs = new Set(["/usr/local/bin", "/usr/bin", "/bin"]);
   for (const bin of [bunPath, "claude", "gh"]) {
-    let resolved = "";
-    try { resolved = execFileSync("which", [bin]).toString().trim(); } catch {}
+    const resolved = whichSync(bin);
     if (resolved) pathDirs.add(dirname(resolved));
   }
-  // Always include standard dirs
-  for (const d of ["/usr/local/bin", "/usr/bin", "/bin"]) pathDirs.add(d);
   const pathLine = Array.from(pathDirs).join(":");
 
   const service = `[Unit]

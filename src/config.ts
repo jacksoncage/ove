@@ -1,4 +1,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { logger } from "./logger";
+
+function getConfigPath(): string {
+  return process.env.CONFIG_PATH || "./config.json";
+}
 
 export interface RunnerConfig {
   name: string;
@@ -50,30 +55,25 @@ export interface Config {
 }
 
 export function loadConfig(): Config {
-  const configPath = process.env.CONFIG_PATH || "./config.json";
+  let raw: Partial<Config> = {};
   try {
-    const raw = JSON.parse(readFileSync(configPath, "utf-8")) as Partial<Config>;
-    return {
-      repos: raw.repos || {},
-      users: raw.users || {},
-      claude: { maxTurns: raw.claude?.maxTurns || 25 },
-      reposDir: process.env.REPOS_DIR || raw.reposDir || "./repos",
-      mcpServers: raw.mcpServers,
-      cron: raw.cron,
-      runner: raw.runner,
-      github: raw.github,
-    };
-  } catch {
-    // Config file doesn't exist yet or is invalid — use defaults
-    return {
-      repos: {},
-      users: {},
-      claude: {
-        maxTurns: 25,
-      },
-      reposDir: process.env.REPOS_DIR || "./repos",
-    };
+    raw = JSON.parse(readFileSync(getConfigPath(), "utf-8"));
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      logger.warn("failed to load config", { error: String(err) });
+    }
   }
+
+  return {
+    repos: raw.repos || {},
+    users: raw.users || {},
+    claude: { maxTurns: raw.claude?.maxTurns || 25 },
+    reposDir: process.env.REPOS_DIR || raw.reposDir || "./repos",
+    mcpServers: raw.mcpServers,
+    cron: raw.cron,
+    runner: raw.runner,
+    github: raw.github,
+  };
 }
 
 export function getUserRepos(config: Config, platformUserId: string): string[] {
@@ -94,19 +94,27 @@ export function isAuthorized(config: Config, platformUserId: string, repo?: stri
 }
 
 export function saveConfig(config: Config): void {
-  const configPath = process.env.CONFIG_PATH || "./config.json";
-  // Read existing file to preserve extra fields (e.g. "runner")
+  const configPath = getConfigPath();
   let existing: Record<string, any> = {};
   try {
     existing = JSON.parse(readFileSync(configPath, "utf-8"));
-  } catch {
-    // File doesn't exist yet or is invalid — start with empty object
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      logger.warn("failed to read existing config for merge", { error: String(err) });
+    }
   }
-  const merged = { ...existing, repos: config.repos, users: config.users, claude: config.claude, reposDir: config.reposDir };
-  if (config.mcpServers) merged.mcpServers = config.mcpServers;
-  if (config.cron) merged.cron = config.cron;
-  if (config.runner) merged.runner = config.runner;
-  if (config.github) merged.github = config.github;
+
+  const merged = {
+    ...existing,
+    repos: config.repos,
+    users: config.users,
+    claude: config.claude,
+    reposDir: config.reposDir,
+    ...(config.mcpServers && { mcpServers: config.mcpServers }),
+    ...(config.cron && { cron: config.cron }),
+    ...(config.runner && { runner: config.runner }),
+    ...(config.github && { github: config.github }),
+  };
   writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n");
 }
 
@@ -118,8 +126,7 @@ export function addRepo(config: Config, name: string, url: string, branch: strin
 export function addUser(config: Config, userId: string, name: string, repos: string[]): void {
   const existing = config.users[userId];
   if (existing) {
-    const merged = new Set([...existing.repos, ...repos]);
-    existing.repos = [...merged];
+    existing.repos = [...new Set([...existing.repos, ...repos])];
   } else {
     config.users[userId] = { name, repos: [...repos] };
   }

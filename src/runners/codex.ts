@@ -1,26 +1,8 @@
-import type {
-  AgentRunner,
-  RunOptions,
-  RunResult,
-  StatusCallback,
-} from "../runner";
+import type { AgentRunner, RunOptions, RunResult, StatusCallback } from "../runner";
 import { logger } from "../logger";
 import { which } from "bun";
 import { realpathSync } from "node:fs";
-
-const TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-
-function withTimeout(proc: { exited: Promise<number>; kill(): void }): Promise<number | "timeout"> {
-  return Promise.race([
-    proc.exited,
-    new Promise<"timeout">((resolve) =>
-      setTimeout(() => {
-        proc.kill();
-        resolve("timeout");
-      }, TIMEOUT_MS)
-    ),
-  ]);
-}
+import { TIMEOUT_MS, withTimeout } from "./timeout";
 
 export function summarizeCodexItem(
   item: any
@@ -130,9 +112,7 @@ export class CodexRunner implements AgentRunner {
             if (event.type === "turn.failed") {
               errorMessage = event.error?.message || "Turn failed";
             }
-          } catch {
-            // Non-JSON line in stream output — skip
-          }
+          } catch {}
         }
       }
     } finally {
