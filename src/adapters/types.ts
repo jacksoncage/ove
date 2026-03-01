@@ -25,7 +25,7 @@ export interface ChatAdapter {
 export type EventSource =
   | { type: "issue"; repo: string; number: number }
   | { type: "pr"; repo: string; number: number }
-  | { type: "http"; requestId: string };
+  | { type: "http"; requestId: string; repo?: string };
 
 export interface IncomingEvent {
   eventId: string;

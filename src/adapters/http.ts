@@ -141,6 +141,9 @@ export class HttpApiAdapter implements EventAdapter {
           }
 
           const rawBody = await req.text();
+          if (rawBody.length > 1_048_576) {
+            return Response.json({ error: "Payload too large (max 1MB)" }, { status: 413 });
+          }
           if (!verifyGitHubSignature(self.githubWebhookSecret, rawBody, signature)) {
             return Response.json({ error: "Invalid signature" }, { status: 401 });
           }
@@ -165,6 +168,11 @@ export class HttpApiAdapter implements EventAdapter {
           const comment = payload.comment;
           if (!comment?.body || !comment?.user?.login) {
             return Response.json({ error: "Missing comment data" }, { status: 400 });
+          }
+
+          // Skip bot's own comments to prevent infinite loops
+          if (comment.user.login === self.botName) {
+            return Response.json({ ok: true, skipped: true, reason: "Own comment" });
           }
 
           const repoFullName = payload.repository?.full_name;
@@ -233,7 +241,11 @@ export class HttpApiAdapter implements EventAdapter {
         if (path === "/api/webhooks/generic" && req.method === "POST") {
           let body: { repo: string; text: string; userId?: string };
           try {
-            body = await req.json() as { repo: string; text: string; userId?: string };
+            const rawBody = await req.text();
+            if (rawBody.length > 1_048_576) {
+              return Response.json({ error: "Payload too large (max 1MB)" }, { status: 413 });
+            }
+            body = JSON.parse(rawBody) as { repo: string; text: string; userId?: string };
           } catch {
             return Response.json({ error: "Invalid JSON body" }, { status: 400 });
           }
@@ -248,7 +260,7 @@ export class HttpApiAdapter implements EventAdapter {
           const userId = (body.userId && typeof body.userId === "string") ? body.userId : "webhook:generic";
           const eventId = `webhook:${crypto.randomUUID()}`;
 
-          const source: EventSource = { type: "http", requestId: eventId };
+          const source: EventSource = { type: "http", requestId: eventId, repo: body.repo.trim() };
           const event: IncomingEvent = {
             eventId,
             userId,

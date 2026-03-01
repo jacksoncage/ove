@@ -303,6 +303,57 @@ describe("GitHub webhook endpoint", () => {
     expect(result.reason).toContain("Unsupported event");
   });
 
+  test("skips bot's own comments to prevent infinite loops", async () => {
+    webhookEvents.length = 0;
+    const payload = makeIssueCommentPayload({
+      comment: { body: `@${BOT_NAME} fix the flaky test`, user: { login: BOT_NAME }, id: 99999 },
+    });
+    const body = JSON.stringify(payload);
+    const signature = signPayload(WEBHOOK_SECRET, body);
+
+    const res = await fetch(`http://localhost:${WEBHOOK_PORT}/api/webhooks/github`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": signature,
+        "X-GitHub-Event": "issue_comment",
+      },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    const result = await res.json();
+    expect(result.ok).toBe(true);
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toBe("Own comment");
+    expect(webhookEvents.length).toBe(0);
+  });
+
+  test("rejects oversized GitHub webhook payload", async () => {
+    webhookEvents.length = 0;
+    // Create a payload larger than 1MB
+    const payload = makeIssueCommentPayload({
+      comment: { body: `@${BOT_NAME} ${"x".repeat(1_100_000)}`, user: { login: "testuser" }, id: 88888 },
+    });
+    const body = JSON.stringify(payload);
+    const signature = signPayload(WEBHOOK_SECRET, body);
+
+    const res = await fetch(`http://localhost:${WEBHOOK_PORT}/api/webhooks/github`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": signature,
+        "X-GitHub-Event": "issue_comment",
+      },
+      body,
+    });
+
+    expect(res.status).toBe(413);
+    const result = await res.json();
+    expect(result.error).toContain("Payload too large");
+    expect(webhookEvents.length).toBe(0);
+  });
+
   test("detects PR from issue_comment on a pull request", async () => {
     webhookEvents.length = 0;
     const payload = makeIssueCommentPayload({
@@ -416,6 +467,46 @@ describe("Generic webhook endpoint", () => {
     expect(res.status).toBe(400);
     const result = await res.json();
     expect(result.error).toContain("text");
+  });
+
+  test("passes repo field through in EventSource", async () => {
+    genericEvents.length = 0;
+    const res = await fetch(`http://localhost:${GENERIC_PORT}/api/webhooks/generic`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": WEBHOOK_API_KEY,
+      },
+      body: JSON.stringify({
+        repo: "acme/my-service",
+        text: "deploy to staging",
+      }),
+    });
+
+    expect(res.status).toBe(202);
+    expect(genericEvents.length).toBe(1);
+    expect(genericEvents[0].source).toMatchObject({ type: "http", repo: "acme/my-service" });
+    expect((genericEvents[0].source as any).repo).toBe("acme/my-service");
+  });
+
+  test("rejects oversized generic webhook payload", async () => {
+    genericEvents.length = 0;
+    const res = await fetch(`http://localhost:${GENERIC_PORT}/api/webhooks/generic`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": WEBHOOK_API_KEY,
+      },
+      body: JSON.stringify({
+        repo: "my-app",
+        text: "x".repeat(1_100_000),
+      }),
+    });
+
+    expect(res.status).toBe(413);
+    const result = await res.json();
+    expect(result.error).toContain("Payload too large");
+    expect(genericEvents.length).toBe(0);
   });
 
   test("uses default userId when not provided", async () => {

@@ -2,8 +2,9 @@ import type { EventAdapter, IncomingEvent, EventSource, AdapterStatus } from "./
 import { logger } from "../logger";
 
 export function parseMention(body: string, botName: string): string | null {
-  if (!body.includes(`@${botName}`)) return null;
-  return body.replace(new RegExp(`@${botName}`, "g"), "").trim();
+  const mention = "@" + botName;
+  if (!body.includes(mention)) return null;
+  return body.replaceAll(mention, "").trim();
 }
 
 interface GitHubComment {
