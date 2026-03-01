@@ -9,7 +9,7 @@ import { TraceStore } from "./trace";
 import type { IncomingMessage, IncomingEvent, EventAdapter } from "./adapters/types";
 import type { AgentRunner } from "./runner";
 import type { Config } from "./config";
-import type { Task } from "./queue";
+
 
 // --- Helpers ---
 
@@ -444,5 +444,110 @@ describe("OVE_PERSONA export", () => {
     expect(OVE_PERSONA).toContain("Swedish");
     expect(OVE_PERSONA).toContain("Ove");
     expect(OVE_PERSONA).toContain("meticulous");
+  });
+});
+
+describe("clear command resets mode to strict", () => {
+  it("after setting assistant mode, clear resets mode back to strict", async () => {
+    const deps = makeDeps();
+    const handler = createMessageHandler(deps);
+
+    // Set assistant mode
+    const modeMsg = makeMessage("mode assistant");
+    await handler(modeMsg);
+    expect(deps.sessions.getMode("slack:U123")).toBe("assistant");
+
+    // Send clear command
+    const clearMsg = makeMessage("clear");
+    await handler(clearMsg);
+
+    // Mode should be back to strict (default) since clear deletes the mode row
+    expect(deps.sessions.getMode("slack:U123")).toBe("strict");
+    expect(clearMsg.replies[0]).toContain("Conversation cleared");
+  });
+
+  it("after clear, discuss prompt no longer contains ASSISTANT_ADDENDUM", async () => {
+    const deps = makeDeps({
+      config: makeConfig({
+        repos: {},
+        users: { "slack:U123": { name: "testuser", repos: [] } },
+      }),
+    });
+
+    let capturedPrompt = "";
+    const capturingRunner: AgentRunner = {
+      name: "capture",
+      run: async (prompt: string) => {
+        capturedPrompt = prompt;
+        return { success: true, output: "response", durationMs: 50 };
+      },
+    };
+    deps.getRunner = () => capturingRunner;
+
+    const handler = createMessageHandler(deps);
+
+    // Set assistant mode
+    const modeMsg = makeMessage("mode assistant");
+    await handler(modeMsg);
+    expect(deps.sessions.getMode("slack:U123")).toBe("assistant");
+
+    // Clear session
+    const clearMsg = makeMessage("clear");
+    await handler(clearMsg);
+
+    // Send discuss message — should NOT have addendum since mode was cleared
+    const chatMsg = makeMessage("discuss something fun");
+    await handler(chatMsg);
+
+    expect(capturedPrompt).toContain("grumpy");
+    expect(capturedPrompt).not.toContain("IMPORTANT MODE OVERRIDE");
+  });
+});
+
+describe("multi-user mode isolation", () => {
+  it("User A in assistant mode does not affect User B in strict mode", async () => {
+    const deps = makeDeps({
+      config: makeConfig({
+        repos: {},
+        users: {
+          "slack:U123": { name: "userA", repos: [] },
+          "slack:U456": { name: "userB", repos: [] },
+        },
+      }),
+    });
+
+    const prompts: { user: string; prompt: string }[] = [];
+    const capturingRunner: AgentRunner = {
+      name: "capture",
+      run: async (prompt: string) => {
+        prompts.push({ user: "unknown", prompt });
+        return { success: true, output: "response", durationMs: 50 };
+      },
+    };
+    deps.getRunner = () => capturingRunner;
+
+    const handler = createMessageHandler(deps);
+
+    // User A sets assistant mode
+    const modeMsg = makeMessage("mode assistant", "slack:U123");
+    await handler(modeMsg);
+    expect(deps.sessions.getMode("slack:U123")).toBe("assistant");
+
+    // User B stays in default (strict) mode
+    expect(deps.sessions.getMode("slack:U456")).toBe("strict");
+
+    // User A sends discuss message — should have ASSISTANT_ADDENDUM
+    const msgA = makeMessage("discuss best pizza places", "slack:U123");
+    await handler(msgA);
+
+    expect(prompts[0].prompt).toContain("IMPORTANT MODE OVERRIDE");
+    expect(prompts[0].prompt).toContain("grumpy");
+
+    // User B sends discuss message — should NOT have ASSISTANT_ADDENDUM
+    const msgB = makeMessage("discuss architecture patterns", "slack:U456");
+    await handler(msgB);
+
+    expect(prompts[1].prompt).not.toContain("IMPORTANT MODE OVERRIDE");
+    expect(prompts[1].prompt).toContain("grumpy");
   });
 });
