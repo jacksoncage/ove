@@ -213,6 +213,7 @@ async function main() {
     if (ea instanceof HttpApiAdapter) {
       ea.setMessageHandler(handleMessage);
       ea.setAdapters(adapters, eventAdapters);
+      ea.setRunningProcesses(runningProcesses);
     }
     await ea.start((event) => handleEvent(event, ea));
   }
