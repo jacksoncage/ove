@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { logger } from "./logger";
 
 function getConfigPath(): string {
   return process.env.CONFIG_PATH || "./config.json";
@@ -57,7 +58,11 @@ export function loadConfig(): Config {
   let raw: Partial<Config> = {};
   try {
     raw = JSON.parse(readFileSync(getConfigPath(), "utf-8"));
-  } catch {}
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      logger.warn("failed to load config", { error: String(err) });
+    }
+  }
 
   return {
     repos: raw.repos || {},
@@ -93,7 +98,11 @@ export function saveConfig(config: Config): void {
   let existing: Record<string, any> = {};
   try {
     existing = JSON.parse(readFileSync(configPath, "utf-8"));
-  } catch {}
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      logger.warn("failed to read existing config for merge", { error: String(err) });
+    }
+  }
 
   const merged = {
     ...existing,

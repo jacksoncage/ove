@@ -385,7 +385,9 @@ export class HttpApiAdapter implements EventAdapter {
                 if (closeTimer) clearTimeout(closeTimer);
                 closeTimer = setTimeout(() => {
                   for (const ctrl of chat.sseControllers) {
-                    try { ctrl.close(); } catch {}
+                    try { ctrl.close(); } catch (err) {
+                      logger.debug("sse close failed", { error: String(err) });
+                    }
                   }
                   chat.sseControllers = [];
                   setTimeout(() => self.chats.delete(chatId), 5 * 60 * 1000);
@@ -512,7 +514,9 @@ export class HttpApiAdapter implements EventAdapter {
   private broadcastSSE(chat: PendingChat, data: object): void {
     const payload = `data: ${JSON.stringify(data)}\n\n`;
     for (const controller of chat.sseControllers) {
-      try { controller.enqueue(payload); } catch {}
+      try { controller.enqueue(payload); } catch (err) {
+        logger.debug("sse broadcast failed", { error: String(err) });
+      }
     }
   }
 
@@ -525,7 +529,9 @@ export class HttpApiAdapter implements EventAdapter {
     this.broadcastSSE(chat, { status: "completed", result: chat.replies.join("\n\n") });
 
     for (const controller of chat.sseControllers) {
-      try { controller.close(); } catch {}
+      try { controller.close(); } catch (err) {
+        logger.debug("sse close failed", { error: String(err) });
+      }
     }
     chat.sseControllers = [];
     setTimeout(() => this.chats.delete(eventId), 5 * 60 * 1000);
