@@ -171,23 +171,15 @@ describe("getPersona (tested via createMessageHandler discuss path)", () => {
       }),
     });
 
-    // In strict mode, discuss prompt should contain OVE_PERSONA but NOT the addendum
-    let capturedPrompt = "";
-    const capturingRunner: AgentRunner = {
-      name: "capture",
-      run: async (prompt: string) => {
-        capturedPrompt = prompt;
-        return { success: true, output: "response", durationMs: 50 };
-      },
-    };
-    deps.getRunner = () => capturingRunner;
-
     const handler = createMessageHandler(deps);
     const msg = makeMessage("discuss testing strategies");
     await handler(msg);
 
-    expect(capturedPrompt).toContain("grumpy");
-    expect(capturedPrompt).not.toContain("IMPORTANT MODE OVERRIDE");
+    const tasks = deps.queue.listByUser("slack:U123", 1);
+    expect(tasks.length).toBe(1);
+    expect(tasks[0].taskType).toBe("discuss");
+    expect(tasks[0].prompt).toContain("grumpy");
+    expect(tasks[0].prompt).not.toContain("IMPORTANT MODE OVERRIDE");
   });
 
   it("appends ASSISTANT_ADDENDUM in assistant mode", async () => {
@@ -198,16 +190,6 @@ describe("getPersona (tested via createMessageHandler discuss path)", () => {
       }),
     });
 
-    let capturedPrompt = "";
-    const capturingRunner: AgentRunner = {
-      name: "capture",
-      run: async (prompt: string) => {
-        capturedPrompt = prompt;
-        return { success: true, output: "response", durationMs: 50 };
-      },
-    };
-    deps.getRunner = () => capturingRunner;
-
     // Set assistant mode before sending the discuss message
     deps.sessions.setMode("slack:U123", "assistant");
 
@@ -215,9 +197,11 @@ describe("getPersona (tested via createMessageHandler discuss path)", () => {
     const msg = makeMessage("discuss testing strategies");
     await handler(msg);
 
-    expect(capturedPrompt).toContain("grumpy");
-    expect(capturedPrompt).toContain("IMPORTANT MODE OVERRIDE");
-    expect(capturedPrompt).toContain("general-purpose assistant");
+    const tasks = deps.queue.listByUser("slack:U123", 1);
+    expect(tasks.length).toBe(1);
+    expect(tasks[0].prompt).toContain("grumpy");
+    expect(tasks[0].prompt).toContain("IMPORTANT MODE OVERRIDE");
+    expect(tasks[0].prompt).toContain("general-purpose assistant");
   });
 });
 
@@ -290,23 +274,13 @@ describe("createEventHandler reads mode for event.userId", () => {
 });
 
 describe("integration: set mode then send message verifies prompt contains addendum", () => {
-  it("set mode → send discuss → prompt sent to runner has ASSISTANT_ADDENDUM", async () => {
+  it("set mode → send discuss → enqueued prompt has ASSISTANT_ADDENDUM", async () => {
     const deps = makeDeps({
       config: makeConfig({
         repos: {},
         users: { "slack:U123": { name: "testuser", repos: [] } },
       }),
     });
-
-    let capturedPrompt = "";
-    const capturingRunner: AgentRunner = {
-      name: "capture",
-      run: async (prompt: string) => {
-        capturedPrompt = prompt;
-        return { success: true, output: "Here's my help!", durationMs: 50 };
-      },
-    };
-    deps.getRunner = () => capturingRunner;
 
     const handler = createMessageHandler(deps);
 
@@ -315,33 +289,23 @@ describe("integration: set mode then send message verifies prompt contains adden
     await handler(modeMsg);
     expect(deps.sessions.getMode("slack:U123")).toBe("assistant");
 
-    // Step 2: send a discuss-type message (routes to handleDiscuss which calls runner directly)
+    // Step 2: send a discuss-type message (enqueued as discuss task)
     const chatMsg = makeMessage("discuss best Italian restaurants nearby");
     await handler(chatMsg);
 
-    // The prompt sent to the runner should contain the addendum
-    expect(capturedPrompt).toContain("IMPORTANT MODE OVERRIDE");
-    expect(capturedPrompt).toContain("willing to help with ANY request");
-    expect(capturedPrompt).toContain("grumpy");
+    const tasks = deps.queue.listByUser("slack:U123", 1);
+    expect(tasks[0].prompt).toContain("IMPORTANT MODE OVERRIDE");
+    expect(tasks[0].prompt).toContain("willing to help with ANY request");
+    expect(tasks[0].prompt).toContain("grumpy");
   });
 
-  it("set strict mode → send discuss → prompt has NO addendum", async () => {
+  it("set strict mode → send discuss → enqueued prompt has NO addendum", async () => {
     const deps = makeDeps({
       config: makeConfig({
         repos: {},
         users: { "slack:U123": { name: "testuser", repos: [] } },
       }),
     });
-
-    let capturedPrompt = "";
-    const capturingRunner: AgentRunner = {
-      name: "capture",
-      run: async (prompt: string) => {
-        capturedPrompt = prompt;
-        return { success: true, output: "I only do code.", durationMs: 50 };
-      },
-    };
-    deps.getRunner = () => capturingRunner;
 
     const handler = createMessageHandler(deps);
 
@@ -354,8 +318,9 @@ describe("integration: set mode then send message verifies prompt contains adden
     const chatMsg = makeMessage("discuss architecture patterns");
     await handler(chatMsg);
 
-    expect(capturedPrompt).not.toContain("IMPORTANT MODE OVERRIDE");
-    expect(capturedPrompt).toContain("grumpy");
+    const tasks = deps.queue.listByUser("slack:U123", 1);
+    expect(tasks[0].prompt).not.toContain("IMPORTANT MODE OVERRIDE");
+    expect(tasks[0].prompt).toContain("grumpy");
   });
 
   it("task enqueue for repo-bound message includes addendum in assistant mode", async () => {
@@ -386,22 +351,13 @@ describe("mode toggle round-trip", () => {
       }),
     });
 
-    const prompts: string[] = [];
-    const capturingRunner: AgentRunner = {
-      name: "capture",
-      run: async (prompt: string) => {
-        prompts.push(prompt);
-        return { success: true, output: "ok", durationMs: 50 };
-      },
-    };
-    deps.getRunner = () => capturingRunner;
-
     const handler = createMessageHandler(deps);
 
     // Start in strict → discuss → no addendum
     const msg1 = makeMessage("discuss testing");
     await handler(msg1);
-    expect(prompts[0]).not.toContain("IMPORTANT MODE OVERRIDE");
+    const tasks1 = deps.queue.listByUser("slack:U123", 10);
+    expect(tasks1[0].prompt).not.toContain("IMPORTANT MODE OVERRIDE");
 
     // Toggle to assistant
     const modeMsg = makeMessage("mode assistant");
@@ -410,7 +366,8 @@ describe("mode toggle round-trip", () => {
     // Discuss again → addendum present
     const msg2 = makeMessage("discuss testing again");
     await handler(msg2);
-    expect(prompts[1]).toContain("IMPORTANT MODE OVERRIDE");
+    const tasks2 = deps.queue.listByUser("slack:U123", 10);
+    expect(tasks2[0].prompt).toContain("IMPORTANT MODE OVERRIDE");
 
     // Toggle back to strict
     const strictMsg = makeMessage("mode strict");
@@ -419,7 +376,8 @@ describe("mode toggle round-trip", () => {
     // Discuss again → no addendum
     const msg3 = makeMessage("discuss testing one more time");
     await handler(msg3);
-    expect(prompts[2]).not.toContain("IMPORTANT MODE OVERRIDE");
+    const tasks3 = deps.queue.listByUser("slack:U123", 10);
+    expect(tasks3[0].prompt).not.toContain("IMPORTANT MODE OVERRIDE");
   });
 });
 
@@ -474,16 +432,6 @@ describe("clear command resets mode to strict", () => {
       }),
     });
 
-    let capturedPrompt = "";
-    const capturingRunner: AgentRunner = {
-      name: "capture",
-      run: async (prompt: string) => {
-        capturedPrompt = prompt;
-        return { success: true, output: "response", durationMs: 50 };
-      },
-    };
-    deps.getRunner = () => capturingRunner;
-
     const handler = createMessageHandler(deps);
 
     // Set assistant mode
@@ -499,8 +447,9 @@ describe("clear command resets mode to strict", () => {
     const chatMsg = makeMessage("discuss something fun");
     await handler(chatMsg);
 
-    expect(capturedPrompt).toContain("grumpy");
-    expect(capturedPrompt).not.toContain("IMPORTANT MODE OVERRIDE");
+    const tasks = deps.queue.listByUser("slack:U123", 1);
+    expect(tasks[0].prompt).toContain("grumpy");
+    expect(tasks[0].prompt).not.toContain("IMPORTANT MODE OVERRIDE");
   });
 });
 
@@ -516,16 +465,6 @@ describe("multi-user mode isolation", () => {
       }),
     });
 
-    const prompts: { user: string; prompt: string }[] = [];
-    const capturingRunner: AgentRunner = {
-      name: "capture",
-      run: async (prompt: string) => {
-        prompts.push({ user: "unknown", prompt });
-        return { success: true, output: "response", durationMs: 50 };
-      },
-    };
-    deps.getRunner = () => capturingRunner;
-
     const handler = createMessageHandler(deps);
 
     // User A sets assistant mode
@@ -540,14 +479,16 @@ describe("multi-user mode isolation", () => {
     const msgA = makeMessage("discuss best pizza places", "slack:U123");
     await handler(msgA);
 
-    expect(prompts[0].prompt).toContain("IMPORTANT MODE OVERRIDE");
-    expect(prompts[0].prompt).toContain("grumpy");
+    const tasksA = deps.queue.listByUser("slack:U123", 1);
+    expect(tasksA[0].prompt).toContain("IMPORTANT MODE OVERRIDE");
+    expect(tasksA[0].prompt).toContain("grumpy");
 
     // User B sends discuss message — should NOT have ASSISTANT_ADDENDUM
     const msgB = makeMessage("discuss architecture patterns", "slack:U456");
     await handler(msgB);
 
-    expect(prompts[1].prompt).not.toContain("IMPORTANT MODE OVERRIDE");
-    expect(prompts[1].prompt).toContain("grumpy");
+    const tasksB = deps.queue.listByUser("slack:U456", 1);
+    expect(tasksB[0].prompt).not.toContain("IMPORTANT MODE OVERRIDE");
+    expect(tasksB[0].prompt).toContain("grumpy");
   });
 });

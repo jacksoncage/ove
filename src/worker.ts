@@ -63,9 +63,11 @@ async function replyWithFallback(
 
 async function processTask(task: Task, deps: WorkerDeps) {
   const isCreateProject = task.taskType === "create-project";
-  const repoInfo = isCreateProject ? null : deps.getRepoInfo(task.repo);
+  const isDiscuss = task.taskType === "discuss";
+  const skipRepoSetup = isCreateProject || isDiscuss;
+  const repoInfo = skipRepoSetup ? null : deps.getRepoInfo(task.repo);
 
-  if (!isCreateProject && !repoInfo) {
+  if (!skipRepoSetup && !repoInfo) {
     deps.queue.fail(task.id, `Unknown repo: ${task.repo}`);
     return;
   }
@@ -84,7 +86,9 @@ async function processTask(task: Task, deps: WorkerDeps) {
 
     let workDir: string;
 
-    if (isCreateProject) {
+    if (isDiscuss) {
+      workDir = deps.config.reposDir;
+    } else if (isCreateProject) {
       workDir = join(deps.config.reposDir, task.repo);
       await Bun.write(join(workDir, ".gitkeep"), "");
     } else {
@@ -108,6 +112,8 @@ async function processTask(task: Task, deps: WorkerDeps) {
       const taskRunner = deps.getRunnerForRepo(task.repo);
       const maxTurns = task.taskType === "cron"
         ? Math.max(deps.config.claude.maxTurns, 100)
+        : isDiscuss
+        ? 5
         : deps.config.claude.maxTurns;
       const runOpts = deps.getRunnerOptsForRepo(task.repo, {
         maxTurns,
@@ -179,7 +185,7 @@ async function processTask(task: Task, deps: WorkerDeps) {
         result.success ? undefined : result.output.slice(0, 2000),
       );
     } finally {
-      if (!isCreateProject) {
+      if (!skipRepoSetup) {
         await deps.repos.removeWorktree(task.repo, task.id).catch(() => {});
       }
     }
