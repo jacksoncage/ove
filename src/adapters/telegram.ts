@@ -3,6 +3,25 @@ import type { ChatAdapter, IncomingMessage, AdapterStatus } from "./types";
 import { logger } from "../logger";
 import { debounce } from "./debounce";
 
+const TELEGRAM_LIMIT = 4096;
+
+function splitHtml(html: string): string[] {
+  if (html.length <= TELEGRAM_LIMIT) return [html];
+  const parts: string[] = [];
+  let remaining = html;
+  while (remaining.length > 0) {
+    if (remaining.length <= TELEGRAM_LIMIT) {
+      parts.push(remaining);
+      break;
+    }
+    let splitAt = remaining.lastIndexOf("\n", TELEGRAM_LIMIT);
+    if (splitAt < TELEGRAM_LIMIT * 0.5) splitAt = TELEGRAM_LIMIT;
+    parts.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).replace(/^\n/, "");
+  }
+  return parts;
+}
+
 function mdToHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -64,7 +83,10 @@ export class TelegramAdapter implements ChatAdapter {
             }
             statusMsgId = undefined;
           }
-          await ctx.reply(mdToHtml(replyText), { parse_mode: "HTML" });
+          const html = mdToHtml(replyText);
+          for (const chunk of splitHtml(html)) {
+            await ctx.reply(chunk, { parse_mode: "HTML" });
+          }
         },
         updateStatus: doUpdate,
       };
@@ -95,7 +117,10 @@ export class TelegramAdapter implements ChatAdapter {
   }
 
   async sendToUser(userId: string, text: string): Promise<void> {
-    const chatId = userId.replace("telegram:", "");
-    await this.bot.api.sendMessage(Number(chatId), mdToHtml(text), { parse_mode: "HTML" });
+    const chatId = Number(userId.replace("telegram:", ""));
+    const html = mdToHtml(text);
+    for (const chunk of splitHtml(html)) {
+      await this.bot.api.sendMessage(chatId, chunk, { parse_mode: "HTML" });
+    }
   }
 }

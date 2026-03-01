@@ -64,7 +64,7 @@ const MESSAGE_LIMITS: Record<string, number> = {
   slack: 3900,
   whatsapp: 60000,
   cli: Infinity,
-  telegram: 4096,
+  telegram: Infinity,
   discord: 2000,
 };
 
