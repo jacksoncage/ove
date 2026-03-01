@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ove — Metrics</title>
+  <link rel="icon" href="/favicon.ico">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #1a1a1a;
+      --bg-panel: #161616;
+      --bg-item: #1e1e1e;
+      --bg-item-hover: #252525;
+      --border: #2a2a2a;
+      --border-light: #333;
+      --text: #e0e0e0;
+      --text-dim: #777;
+      --text-muted: #555;
+      --accent: #8ab4f8;
+      --green: #4ade80;
+      --green-dim: #16361f;
+      --red: #f28b82;
+      --red-dim: #3b1a1a;
+      --amber: #fbbf24;
+      --amber-dim: #3b2e0a;
+      --cyan: #22d3ee;
+      --cyan-dim: #0a2e33;
+      --blue: #60a5fa;
+      --blue-dim: #152540;
+    }
+
+    body {
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-panel);
+      flex-shrink: 0;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .header-logo {
+      width: 24px;
+      height: 24px;
+      border-radius: 3px;
+      object-fit: cover;
+    }
+
+    .header-left h1 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+    }
+
+    .header-left h1 span { color: var(--text); }
+
+    .nav-link {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      transition: all 0.15s;
+    }
+    .nav-link:hover { color: var(--text); border-color: var(--border-light); }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle-wrap input { display: none; }
+
+    .toggle-track {
+      width: 28px;
+      height: 14px;
+      background: var(--border);
+      border-radius: 7px;
+      position: relative;
+      transition: background 0.2s;
+    }
+
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 10px;
+      height: 10px;
+      background: var(--text-dim);
+      border-radius: 50%;
+      transition: all 0.2s;
+    }
+
+    .toggle-wrap input:checked + .toggle-track {
+      background: var(--green-dim);
+    }
+
+    .toggle-wrap input:checked + .toggle-track::after {
+      left: 16px;
+      background: var(--green);
+    }
+
+    .last-updated {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Content */
+    .content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .section-header {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .section-header::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* Metric cards grid */
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .metric-card {
+      background: var(--bg-item);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.6rem 0.75rem;
+      text-align: center;
+    }
+
+    .metric-value {
+      font-size: 1.4rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.2;
+    }
+
+    .metric-value.pending  { color: var(--amber); }
+    .metric-value.running  { color: var(--cyan); }
+    .metric-value.completed { color: var(--green); }
+    .metric-value.failed   { color: var(--red); }
+    .metric-value.neutral  { color: var(--text); }
+    .metric-value.accent   { color: var(--accent); }
+    .metric-value.error    { color: var(--red); }
+    .metric-value.good     { color: var(--green); }
+
+    .metric-label {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 0.15rem;
+    }
+
+    /* Duration bar chart */
+    .duration-chart {
+      margin-bottom: 1.5rem;
+    }
+
+    .duration-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.35rem;
+    }
+
+    .duration-bar-label {
+      font-size: 0.7rem;
+      color: var(--accent);
+      width: 140px;
+      flex-shrink: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: right;
+    }
+
+    .duration-bar-track {
+      flex: 1;
+      height: 16px;
+      background: var(--bg-item);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .duration-bar-fill {
+      height: 100%;
+      background: var(--blue-dim);
+      border-right: 2px solid var(--blue);
+      transition: width 0.3s ease;
+    }
+
+    .duration-bar-text {
+      font-size: 0.6rem;
+      color: var(--text-dim);
+      width: 80px;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .duration-bar-count {
+      font-size: 0.55rem;
+      color: var(--text-muted);
+      width: 50px;
+      flex-shrink: 0;
+      text-align: right;
+    }
+
+    /* Error rate gauge */
+    .gauge-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .gauge {
+      width: 120px;
+      height: 120px;
+      position: relative;
+    }
+
+    .gauge svg {
+      width: 100%;
+      height: 100%;
+      transform: rotate(-90deg);
+    }
+
+    .gauge-bg {
+      fill: none;
+      stroke: var(--border);
+      stroke-width: 8;
+    }
+
+    .gauge-fill {
+      fill: none;
+      stroke-width: 8;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 0.5s ease, stroke 0.3s;
+    }
+
+    .gauge-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+    }
+
+    .gauge-percent {
+      font-size: 1.2rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .gauge-sublabel {
+      font-size: 0.55rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* Repo breakdown table */
+    .repo-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 1.5rem;
+      font-size: 0.7rem;
+    }
+
+    .repo-table th {
+      text-align: left;
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.4rem 0.6rem;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+    }
+
+    .repo-table th.num { text-align: right; }
+
+    .repo-table td {
+      padding: 0.4rem 0.6rem;
+      border-bottom: 1px solid var(--border);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .repo-table td.num { text-align: right; }
+
+    .repo-table tr:hover td { background: var(--bg-item-hover); }
+
+    .repo-name { color: var(--accent); }
+    .count-pending { color: var(--amber); }
+    .count-running { color: var(--cyan); }
+    .count-completed { color: var(--green); }
+    .count-failed { color: var(--red); }
+
+    /* Adapter health */
+    .adapter-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .adapter-card {
+      background: var(--bg-item);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.6rem 0.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .adapter-card[data-status="disconnected"] { border-color: var(--red-dim); }
+    .adapter-card[data-status="degraded"] { border-color: var(--amber-dim); }
+
+    .adapter-name {
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .adapter-type {
+      font-size: 0.5rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    .badge {
+      font-size: 0.55rem;
+      padding: 0.1rem 0.35rem;
+      border-radius: 2px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .badge-connected   { background: var(--green-dim); color: var(--green); }
+    .badge-disconnected { background: var(--red-dim); color: var(--red); }
+    .badge-degraded     { background: var(--amber-dim); color: var(--amber); }
+    .badge-unknown      { background: #222; color: var(--text-muted); }
+
+    .empty-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 50vh;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+
+    .uptime-row {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+    .uptime-value { color: var(--text-dim); }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <img src="/logo.png" class="header-logo" alt="Ove">
+      <h1><span>ove</span> metrics</h1>
+      <a href="/" class="nav-link">chat</a>
+      <a href="/trace" class="nav-link">traces</a>
+      <a href="/status" class="nav-link">status</a>
+    </div>
+    <div class="header-right">
+      <span class="last-updated" id="lastUpdated"></span>
+      <label class="toggle-wrap">
+        <input type="checkbox" id="autoRefresh" checked />
+        <div class="toggle-track"></div>
+        auto-refresh
+      </label>
+    </div>
+  </header>
+
+  <div class="content" id="content">
+    <div class="empty-state" id="loading">Loading metrics...</div>
+  </div>
+
+  <script>
+    var API_KEY = localStorage.getItem("ove-api-key") || prompt("API Key:");
+    if (API_KEY) localStorage.setItem("ove-api-key", API_KEY);
+
+    var contentEl = document.getElementById("content");
+    var loadingEl = document.getElementById("loading");
+    var lastUpdatedEl = document.getElementById("lastUpdated");
+    var autoRefreshEl = document.getElementById("autoRefresh");
+    var refreshTimer = null;
+    var SVG_NS = "http://www.w3.org/2000/svg";
+
+    function apiHeaders() { return { "X-API-Key": API_KEY }; }
+
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    }
+
+    function svgEl(tag, attrs) {
+      var e = document.createElementNS(SVG_NS, tag);
+      if (attrs) {
+        for (var k in attrs) {
+          e.setAttribute(k, String(attrs[k]));
+        }
+      }
+      return e;
+    }
+
+    function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+    function fmtUptime(secs) {
+      var d = Math.floor(secs / 86400);
+      var h = Math.floor((secs % 86400) / 3600);
+      var m = Math.floor((secs % 3600) / 60);
+      var s = Math.floor(secs % 60);
+      var parts = [];
+      if (d > 0) parts.push(d + "d");
+      if (h > 0) parts.push(h + "h");
+      if (m > 0) parts.push(m + "m");
+      parts.push(s + "s");
+      return parts.join(" ");
+    }
+
+    function fmtDuration(ms) {
+      if (ms < 1000) return ms + "ms";
+      var secs = ms / 1000;
+      if (secs < 60) return secs.toFixed(1) + "s";
+      var mins = secs / 60;
+      if (mins < 60) return mins.toFixed(1) + "m";
+      var hrs = mins / 60;
+      return hrs.toFixed(1) + "h";
+    }
+
+    function buildGauge(errorRate) {
+      var radius = 48;
+      var circumference = 2 * Math.PI * radius;
+      var errorPct = Math.min(errorRate, 1);
+      var offset = circumference - (errorPct * circumference);
+      var strokeColor = errorRate > 0.1 ? "var(--red)" : errorRate > 0.05 ? "var(--amber)" : "var(--green)";
+      var errPct = (errorRate * 100).toFixed(1);
+
+      var gaugeDiv = el("div", "gauge");
+
+      var svg = svgEl("svg", { viewBox: "0 0 120 120" });
+      var bgCircle = svgEl("circle", { class: "gauge-bg", cx: "60", cy: "60", r: String(radius) });
+      svg.appendChild(bgCircle);
+      var fillCircle = svgEl("circle", {
+        class: "gauge-fill", cx: "60", cy: "60", r: String(radius),
+        stroke: strokeColor,
+        "stroke-dasharray": String(circumference),
+        "stroke-dashoffset": String(offset)
+      });
+      svg.appendChild(fillCircle);
+      gaugeDiv.appendChild(svg);
+
+      var gaugeText = el("div", "gauge-text");
+      var gPct = el("div", "gauge-percent", errPct + "%");
+      gPct.style.color = strokeColor;
+      gaugeText.appendChild(gPct);
+      gaugeText.appendChild(el("div", "gauge-sublabel", "error rate"));
+      gaugeDiv.appendChild(gaugeText);
+
+      return gaugeDiv;
+    }
+
+    function renderMetrics(data) {
+      clear(contentEl);
+
+      // Uptime
+      var uptimeRow = el("div", "uptime-row");
+      uptimeRow.appendChild(document.createTextNode("uptime "));
+      uptimeRow.appendChild(el("span", "uptime-value", fmtUptime(data.uptime)));
+      contentEl.appendChild(uptimeRow);
+
+      // Queue depth
+      contentEl.appendChild(el("div", "section-header", "Queue Depth"));
+      var qGrid = el("div", "metric-grid");
+      var statuses = ["pending", "running", "completed", "failed"];
+      for (var i = 0; i < statuses.length; i++) {
+        var s = statuses[i];
+        var card = el("div", "metric-card");
+        card.appendChild(el("div", "metric-value " + s, String(data.counts[s] || 0)));
+        card.appendChild(el("div", "metric-label", s));
+        qGrid.appendChild(card);
+      }
+      contentEl.appendChild(qGrid);
+
+      // Throughput + Error rate
+      contentEl.appendChild(el("div", "section-header", "Throughput & Error Rate"));
+      var tGrid = el("div", "metric-grid");
+
+      var t1 = el("div", "metric-card");
+      t1.appendChild(el("div", "metric-value accent", String(data.throughput.lastHour)));
+      t1.appendChild(el("div", "metric-label", "last hour"));
+      tGrid.appendChild(t1);
+
+      var t2 = el("div", "metric-card");
+      t2.appendChild(el("div", "metric-value accent", String(data.throughput.last24h)));
+      t2.appendChild(el("div", "metric-label", "last 24h"));
+      tGrid.appendChild(t2);
+
+      var errPct = (data.errorRate * 100).toFixed(1);
+      var errCard = el("div", "metric-card");
+      var errClass = data.errorRate > 0.1 ? "error" : data.errorRate > 0 ? "failed" : "good";
+      errCard.appendChild(el("div", "metric-value " + errClass, errPct + "%"));
+      errCard.appendChild(el("div", "metric-label", "error rate"));
+      tGrid.appendChild(errCard);
+
+      contentEl.appendChild(tGrid);
+
+      // Error rate gauge
+      var gaugeSection = el("div", "gauge-wrap");
+      gaugeSection.appendChild(buildGauge(data.errorRate));
+      contentEl.appendChild(gaugeSection);
+
+      // Duration by repo (bar chart)
+      if (data.avgDurationByRepo && data.avgDurationByRepo.length > 0) {
+        contentEl.appendChild(el("div", "section-header", "Avg Task Duration by Repo"));
+        var chartDiv = el("div", "duration-chart");
+        var maxMs = 0;
+        for (var i = 0; i < data.avgDurationByRepo.length; i++) {
+          if (data.avgDurationByRepo[i].avgMs > maxMs) maxMs = data.avgDurationByRepo[i].avgMs;
+        }
+        for (var i = 0; i < data.avgDurationByRepo.length; i++) {
+          var d = data.avgDurationByRepo[i];
+          var row = el("div", "duration-bar-row");
+          row.appendChild(el("div", "duration-bar-label", d.repo));
+          var track = el("div", "duration-bar-track");
+          var fill = el("div", "duration-bar-fill");
+          var pct = maxMs > 0 ? (d.avgMs / maxMs * 100) : 0;
+          fill.style.width = Math.max(pct, 2) + "%";
+          track.appendChild(fill);
+          row.appendChild(track);
+          row.appendChild(el("div", "duration-bar-text", fmtDuration(d.avgMs)));
+          row.appendChild(el("div", "duration-bar-count", d.count + " tasks"));
+          chartDiv.appendChild(row);
+        }
+        contentEl.appendChild(chartDiv);
+      }
+
+      // Per-repo breakdown table
+      if (data.repoBreakdown && data.repoBreakdown.length > 0) {
+        contentEl.appendChild(el("div", "section-header", "Per-Repo Breakdown"));
+        var table = el("table", "repo-table");
+        var thead = document.createElement("thead");
+        var headRow = document.createElement("tr");
+        var cols = ["Repo", "Pending", "Running", "Completed", "Failed", "Total"];
+        for (var i = 0; i < cols.length; i++) {
+          var th = el("th", i > 0 ? "num" : "", cols[i]);
+          headRow.appendChild(th);
+        }
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+
+        var tbody = document.createElement("tbody");
+        for (var i = 0; i < data.repoBreakdown.length; i++) {
+          var r = data.repoBreakdown[i];
+          var tr = document.createElement("tr");
+          tr.appendChild(el("td", "repo-name", r.repo));
+
+          var td1 = el("td", "num");
+          td1.appendChild(el("span", "count-pending", String(r.pending)));
+          tr.appendChild(td1);
+
+          var td2 = el("td", "num");
+          td2.appendChild(el("span", "count-running", String(r.running)));
+          tr.appendChild(td2);
+
+          var td3 = el("td", "num");
+          td3.appendChild(el("span", "count-completed", String(r.completed)));
+          tr.appendChild(td3);
+
+          var td4 = el("td", "num");
+          td4.appendChild(el("span", "count-failed", String(r.failed)));
+          tr.appendChild(td4);
+
+          var total = r.pending + r.running + r.completed + r.failed;
+          tr.appendChild(el("td", "num", String(total)));
+
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        contentEl.appendChild(table);
+      }
+
+      // Adapter health
+      if (data.adapters && data.adapters.length > 0) {
+        contentEl.appendChild(el("div", "section-header", "Adapter Health"));
+        var aGrid = el("div", "adapter-grid");
+        for (var i = 0; i < data.adapters.length; i++) {
+          var a = data.adapters[i];
+          var card = el("div", "adapter-card");
+          card.dataset.status = a.status;
+          var left = el("div");
+          left.appendChild(el("div", "adapter-name", a.name));
+          left.appendChild(el("div", "adapter-type", a.type));
+          card.appendChild(left);
+          card.appendChild(el("span", "badge badge-" + a.status, a.status));
+          aGrid.appendChild(card);
+        }
+        contentEl.appendChild(aGrid);
+      }
+
+      lastUpdatedEl.textContent = "updated " + new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    }
+
+    async function fetchMetrics() {
+      try {
+        var res = await fetch("/api/metrics?key=" + encodeURIComponent(API_KEY), { headers: apiHeaders() });
+        if (!res.ok) {
+          if (loadingEl && loadingEl.parentNode) loadingEl.textContent = "Error: " + res.status;
+          return;
+        }
+        var data = await res.json();
+        renderMetrics(data);
+      } catch (err) {
+        if (loadingEl && loadingEl.parentNode) {
+          loadingEl.textContent = "Error: " + err.message;
+        }
+      }
+    }
+
+    function startAutoRefresh() {
+      if (refreshTimer) clearInterval(refreshTimer);
+      refreshTimer = setInterval(fetchMetrics, 5000);
+    }
+
+    function stopAutoRefresh() {
+      if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+      }
+    }
+
+    autoRefreshEl.addEventListener("change", function () {
+      if (autoRefreshEl.checked) {
+        startAutoRefresh();
+      } else {
+        stopAutoRefresh();
+      }
+    });
+
+    // Init
+    fetchMetrics();
+    startAutoRefresh();
+  </script>
+</body>
+</html>
