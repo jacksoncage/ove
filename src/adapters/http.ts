@@ -159,6 +159,7 @@ export class HttpApiAdapter implements EventAdapter {
             repo: t.repo,
             prompt: t.prompt,
             status: t.status,
+            priority: t.priority,
             result: t.result && t.result.length > 300 ? t.result.slice(0, 300) + "..." : t.result,
             createdAt: t.createdAt,
             completedAt: t.completedAt,
