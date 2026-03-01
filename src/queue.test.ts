@@ -198,4 +198,90 @@ describe("TaskQueue", () => {
     const second = queue.dequeue();
     expect(second!.prompt).toBe("second normal");
   });
+
+  describe("metrics()", () => {
+    it("returns zeroes on empty queue", () => {
+      const m = queue.metrics();
+      expect(m.counts).toEqual({ pending: 0, running: 0, completed: 0, failed: 0 });
+      expect(m.avgDurationByRepo).toEqual([]);
+      expect(m.throughput.lastHour).toBe(0);
+      expect(m.throughput.last24h).toBe(0);
+      expect(m.errorRate).toBe(0);
+      expect(m.repoBreakdown).toEqual([]);
+    });
+
+    it("returns correct counts by status", () => {
+      queue.enqueue({ userId: "u1", repo: "a", prompt: "p1" });
+      const id2 = queue.enqueue({ userId: "u1", repo: "b", prompt: "p2" });
+      queue.dequeue(); // dequeues repo "a" -> running
+      // repo "b" is still pending since "a" is running but different repo, so dequeue "b"
+      const task2 = queue.dequeue();
+      if (task2) queue.complete(task2.id, "done");
+
+      const m = queue.metrics();
+      expect(m.counts.running).toBe(1);
+      expect(m.counts.completed).toBe(1);
+    });
+
+    it("computes average duration by repo", () => {
+      const id1 = queue.enqueue({ userId: "u1", repo: "app-a", prompt: "p1" });
+      queue.dequeue();
+      queue.complete(id1, "ok");
+
+      const id2 = queue.enqueue({ userId: "u1", repo: "app-a", prompt: "p2" });
+      queue.dequeue();
+      queue.complete(id2, "ok");
+
+      const m = queue.metrics();
+      expect(m.avgDurationByRepo.length).toBe(1);
+      expect(m.avgDurationByRepo[0].repo).toBe("app-a");
+      expect(m.avgDurationByRepo[0].count).toBe(2);
+      expect(m.avgDurationByRepo[0].avgMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it("computes throughput for recent tasks", () => {
+      const id = queue.enqueue({ userId: "u1", repo: "x", prompt: "p" });
+      queue.dequeue();
+      queue.complete(id, "done");
+
+      const m = queue.metrics();
+      expect(m.throughput.lastHour).toBe(1);
+      expect(m.throughput.last24h).toBe(1);
+    });
+
+    it("computes error rate", () => {
+      const id1 = queue.enqueue({ userId: "u1", repo: "a", prompt: "p1" });
+      queue.dequeue();
+      queue.complete(id1, "ok");
+
+      const id2 = queue.enqueue({ userId: "u1", repo: "a", prompt: "p2" });
+      queue.dequeue();
+      queue.fail(id2, "broken");
+
+      const m = queue.metrics();
+      // 1 failed out of 2 finished = 0.5
+      expect(m.errorRate).toBe(0.5);
+    });
+
+    it("returns per-repo breakdown", () => {
+      queue.enqueue({ userId: "u1", repo: "alpha", prompt: "p1" });
+      queue.enqueue({ userId: "u1", repo: "beta", prompt: "p2" });
+      queue.enqueue({ userId: "u2", repo: "alpha", prompt: "p3" });
+
+      const m = queue.metrics();
+      expect(m.repoBreakdown.length).toBe(2);
+      const alpha = m.repoBreakdown.find((r) => r.repo === "alpha");
+      expect(alpha).toBeDefined();
+      expect(alpha!.pending).toBe(2);
+      const beta = m.repoBreakdown.find((r) => r.repo === "beta");
+      expect(beta).toBeDefined();
+      expect(beta!.pending).toBe(1);
+    });
+
+    it("error rate is zero when no finished tasks", () => {
+      queue.enqueue({ userId: "u1", repo: "x", prompt: "p" });
+      const m = queue.metrics();
+      expect(m.errorRate).toBe(0);
+    });
+  });
 });

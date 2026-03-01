@@ -118,6 +118,41 @@ describe("HttpApiAdapter", () => {
     const html = await res.text();
     expect(html).toContain("<html");
   });
+
+  test("GET /api/metrics requires auth", async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/metrics`);
+    expect(res.status).toBe(401);
+  });
+
+  test("GET /api/metrics returns metrics data", async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/metrics`, {
+      headers: { "X-API-Key": API_KEY },
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.counts).toBeDefined();
+    expect(data.counts.pending).toBeGreaterThanOrEqual(0);
+    expect(data.counts.running).toBeGreaterThanOrEqual(0);
+    expect(data.counts.completed).toBeGreaterThanOrEqual(0);
+    expect(data.counts.failed).toBeGreaterThanOrEqual(0);
+    expect(data.avgDurationByRepo).toBeInstanceOf(Array);
+    expect(data.throughput).toBeDefined();
+    expect(typeof data.throughput.lastHour).toBe("number");
+    expect(typeof data.throughput.last24h).toBe("number");
+    expect(typeof data.errorRate).toBe("number");
+    expect(data.repoBreakdown).toBeInstanceOf(Array);
+    expect(data.adapters).toBeInstanceOf(Array);
+    expect(typeof data.uptime).toBe("number");
+    expect(data.timestamp).toBeDefined();
+  });
+
+  test("GET /metrics serves metrics page", async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/metrics`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<html");
+    expect(html).toContain("metrics");
+  });
 });
 
 // --- Webhook tests ---

@@ -134,6 +134,75 @@ export class TaskQueue {
     return row;
   }
 
+  metrics(): {
+    counts: { pending: number; running: number; completed: number; failed: number };
+    avgDurationByRepo: { repo: string; avgMs: number; count: number }[];
+    throughput: { lastHour: number; last24h: number };
+    errorRate: number;
+    repoBreakdown: { repo: string; pending: number; running: number; completed: number; failed: number }[];
+  } {
+    const counts = this.stats();
+
+    // Average task duration by repo (only completed/failed tasks with both timestamps)
+    const avgDurationByRepo = this.db
+      .query(
+        `SELECT repo,
+          AVG((julianday(completed_at) - julianday(created_at)) * 86400000) as avg_ms,
+          COUNT(*) as count
+        FROM tasks
+        WHERE completed_at IS NOT NULL AND created_at IS NOT NULL
+          AND status IN ('completed', 'failed')
+        GROUP BY repo
+        ORDER BY count DESC`
+      )
+      .all() as { repo: string; avg_ms: number; count: number }[];
+
+    // Task throughput — completed in last hour and last 24h
+    const now = new Date().toISOString();
+    const throughputRow = this.db
+      .query(
+        `SELECT
+          COUNT(*) FILTER (WHERE completed_at >= datetime(?, '-1 hour')) as last_hour,
+          COUNT(*) FILTER (WHERE completed_at >= datetime(?, '-24 hours')) as last_24h
+        FROM tasks
+        WHERE status IN ('completed', 'failed') AND completed_at IS NOT NULL`
+      )
+      .get(now, now) as { last_hour: number; last_24h: number };
+
+    // Error rate: failed / total finished
+    const total = counts.completed + counts.failed;
+    const errorRate = total > 0 ? counts.failed / total : 0;
+
+    // Per-repo breakdown
+    const repoBreakdown = this.db
+      .query(
+        `SELECT repo,
+          COUNT(*) FILTER (WHERE status = 'pending') as pending,
+          COUNT(*) FILTER (WHERE status = 'running') as running,
+          COUNT(*) FILTER (WHERE status = 'completed') as completed,
+          COUNT(*) FILTER (WHERE status = 'failed') as failed
+        FROM tasks
+        GROUP BY repo
+        ORDER BY (COUNT(*) FILTER (WHERE status = 'running') + COUNT(*) FILTER (WHERE status = 'pending')) DESC, repo ASC`
+      )
+      .all() as { repo: string; pending: number; running: number; completed: number; failed: number }[];
+
+    return {
+      counts,
+      avgDurationByRepo: avgDurationByRepo.map((r) => ({
+        repo: r.repo,
+        avgMs: Math.round(r.avg_ms),
+        count: r.count,
+      })),
+      throughput: {
+        lastHour: throughputRow.last_hour,
+        last24h: throughputRow.last_24h,
+      },
+      errorRate: Math.round(errorRate * 10000) / 10000, // 4 decimal places
+      repoBreakdown,
+    };
+  }
+
   listActive(limit: number = 20): Task[] {
     const rows = this.db
       .query(
