@@ -47,8 +47,14 @@ export class HttpApiAdapter implements EventAdapter {
   private startedAt?: string;
   private githubWebhookSecret: string;
   private botName: string;
+  private runningProcesses: Map<string, { abort: AbortController; task: any }> | null = null;
 
   private hostname: string;
+
+  /** Register the running processes map so the cancel endpoint can abort running tasks */
+  setRunningProcesses(processes: Map<string, { abort: AbortController; task: any }>): void {
+    this.runningProcesses = processes;
+  }
 
   constructor(port: number, apiKey: string, trace: TraceStore, queue?: TaskQueue, sessions?: SessionStore, hostname?: string, githubWebhookSecret?: string, botName?: string) {
     this.port = port;
@@ -140,6 +146,105 @@ export class HttpApiAdapter implements EventAdapter {
             headers: { "Content-Type": "text/html" },
           });
         }
+
+        // POST /api/webhooks/github — GitHub webhook with HMAC-SHA256 signature validation
+        if (path === "/api/webhooks/github" && req.method === "POST") {
+          if (!self.githubWebhookSecret) {
+            return Response.json({ error: "GitHub webhook secret not configured" }, { status: 500 });
+          }
+
+          const signature = req.headers.get("X-Hub-Signature-256");
+          if (!signature) {
+            return Response.json({ error: "Missing signature" }, { status: 401 });
+          }
+
+          const rawBody = await req.text();
+          if (rawBody.length > 1_048_576) {
+            return Response.json({ error: "Payload too large (max 1MB)" }, { status: 413 });
+          }
+          if (!verifyGitHubSignature(self.githubWebhookSecret, rawBody, signature)) {
+            return Response.json({ error: "Invalid signature" }, { status: 401 });
+          }
+
+          const githubEvent = req.headers.get("X-GitHub-Event");
+          if (githubEvent !== "issue_comment" && githubEvent !== "pull_request_review_comment") {
+            return Response.json({ ok: true, skipped: true, reason: `Unsupported event: ${githubEvent}` });
+          }
+
+          let payload: any;
+          try {
+            payload = JSON.parse(rawBody);
+          } catch {
+            return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+          }
+
+          // Only process created comments
+          if (payload.action !== "created") {
+            return Response.json({ ok: true, skipped: true, reason: `Ignored action: ${payload.action}` });
+          }
+
+          const comment = payload.comment;
+          if (!comment?.body || !comment?.user?.login) {
+            return Response.json({ error: "Missing comment data" }, { status: 400 });
+          }
+
+          // Skip bot's own comments to prevent infinite loops
+          if (comment.user.login === self.botName) {
+            return Response.json({ ok: true, skipped: true, reason: "Own comment" });
+          }
+
+          const repoFullName = payload.repository?.full_name;
+          if (!repoFullName) {
+            return Response.json({ error: "Missing repository data" }, { status: 400 });
+          }
+
+          // Parse @mention — same logic as github.ts polling adapter
+          const text = parseMention(comment.body, self.botName);
+          if (!text) {
+            return Response.json({ ok: true, skipped: true, reason: "No mention found" });
+          }
+
+          // Determine source type and issue/PR number
+          let sourceType: "issue" | "pr";
+          let number: number;
+
+          if (githubEvent === "pull_request_review_comment") {
+            sourceType = "pr";
+            number = payload.pull_request?.number;
+          } else {
+            // issue_comment can be on issues or PRs
+            if (payload.issue?.pull_request) {
+              sourceType = "pr";
+            } else {
+              sourceType = "issue";
+            }
+            number = payload.issue?.number;
+          }
+
+          if (!number) {
+            return Response.json({ error: "Could not determine issue/PR number" }, { status: 400 });
+          }
+
+          const source: EventSource = { type: sourceType, repo: repoFullName, number };
+          const eventId = `github:${repoFullName}:${sourceType}:${number}`;
+
+          const event: IncomingEvent = {
+            eventId,
+            userId: `github:${comment.user.login}`,
+            platform: "github",
+            source,
+            text,
+          };
+
+          logger.info("github webhook event received", {
+            repo: repoFullName,
+            user: comment.user.login,
+            event: githubEvent,
+            number,
+          });
+
+          self.onEvent?.(event);
+          return Response.json({ ok: true, eventId });
         }
 
         // Auth check for API routes
@@ -250,6 +355,33 @@ export class HttpApiAdapter implements EventAdapter {
             createdAt: t.createdAt,
             completedAt: t.completedAt,
           })));
+        }
+
+        // POST /api/tasks/:id/cancel — cancel a running or pending task
+        const cancelMatch = path.match(/^\/api\/tasks\/([^/]+)\/cancel$/);
+        if (cancelMatch && req.method === "POST") {
+          if (!self.queue) {
+            return Response.json({ error: "Task queue not available" }, { status: 503 });
+          }
+          const taskId = cancelMatch[1];
+          const task = self.queue.get(taskId);
+          if (!task) {
+            return Response.json({ error: "Task not found" }, { status: 404 });
+          }
+          if (task.status !== "running" && task.status !== "pending") {
+            return Response.json({ error: "Task is not cancellable", status: task.status }, { status: 409 });
+          }
+
+          // If it's running, abort the process
+          if (task.status === "running" && self.runningProcesses) {
+            const entry = self.runningProcesses.get(taskId);
+            if (entry) {
+              entry.abort.abort();
+            }
+          }
+
+          self.queue.cancel(taskId);
+          return Response.json({ ok: true, taskId: task.id, cancelled: true });
         }
 
         // POST /api/message — submit a chat message (full chat pipeline)
