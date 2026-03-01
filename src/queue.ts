@@ -5,6 +5,7 @@ export interface TaskInput {
   repo: string;
   prompt: string;
   taskType?: string;
+  priority?: number;
 }
 
 export interface Task {
@@ -15,6 +16,7 @@ export interface Task {
   status: "pending" | "running" | "completed" | "failed";
   result: string | null;
   taskType: string | null;
+  priority: number;
   createdAt: string;
   completedAt: string | null;
 }
@@ -27,6 +29,7 @@ interface TaskRow {
   status: string;
   result: string | null;
   task_type: string | null;
+  priority: number;
   created_at: string;
   completed_at: string | null;
 }
@@ -45,6 +48,7 @@ export class TaskQueue {
         status TEXT NOT NULL DEFAULT 'pending',
         result TEXT,
         task_type TEXT,
+        priority INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         completed_at TEXT
       )
@@ -54,14 +58,18 @@ export class TaskQueue {
     if (!columns.some(c => c.name === "task_type")) {
       this.db.run("ALTER TABLE tasks ADD COLUMN task_type TEXT");
     }
+    // Migration: add priority column if missing (backward compat)
+    if (!columns.some(c => c.name === "priority")) {
+      this.db.run("ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0");
+    }
   }
 
   enqueue(input: TaskInput): string {
     const id = crypto.randomUUID();
     this.db.run(
-      `INSERT INTO tasks (id, user_id, repo, prompt, status, task_type, created_at)
-       VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
-      [id, input.userId, input.repo, input.prompt, input.taskType || null, new Date().toISOString()]
+      `INSERT INTO tasks (id, user_id, repo, prompt, status, task_type, priority, created_at)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      [id, input.userId, input.repo, input.prompt, input.taskType || null, input.priority ?? 0, new Date().toISOString()]
     );
     return id;
   }
@@ -72,7 +80,7 @@ export class TaskQueue {
         `SELECT * FROM tasks
          WHERE status = 'pending'
          AND repo NOT IN (SELECT repo FROM tasks WHERE status = 'running')
-         ORDER BY created_at ASC
+         ORDER BY priority DESC, created_at ASC
          LIMIT 1`
       )
       .get() as TaskRow;
@@ -106,7 +114,7 @@ export class TaskQueue {
   listByUser(userId: string, limit: number = 10): Task[] {
     const rows = this.db
       .query(
-        `SELECT * FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`
+        `SELECT * FROM tasks WHERE user_id = ? ORDER BY priority DESC, created_at DESC LIMIT ?`
       )
       .all(userId, limit) as TaskRow[];
     return rows.map((r) => this.rowToTask(r));
@@ -129,7 +137,7 @@ export class TaskQueue {
   listActive(limit: number = 20): Task[] {
     const rows = this.db
       .query(
-        `SELECT * FROM tasks WHERE status IN ('running', 'pending') ORDER BY created_at ASC LIMIT ?`
+        `SELECT * FROM tasks WHERE status IN ('running', 'pending') ORDER BY priority DESC, created_at ASC LIMIT ?`
       )
       .all(limit) as TaskRow[];
     return rows.map((r) => this.rowToTask(r));
@@ -159,7 +167,7 @@ export class TaskQueue {
       sql += ` WHERE status = ?`;
       params.push(status);
     }
-    sql += ` ORDER BY created_at DESC LIMIT ?`;
+    sql += ` ORDER BY priority DESC, created_at DESC LIMIT ?`;
     params.push(limit);
     const rows = this.db.query(sql).all(...params) as TaskRow[];
     return rows.map((r) => this.rowToTask(r));
@@ -182,6 +190,7 @@ export class TaskQueue {
       status: row.status as "pending" | "running" | "completed" | "failed",
       result: row.result,
       taskType: row.task_type || null,
+      priority: row.priority ?? 0,
       createdAt: row.created_at,
       completedAt: row.completed_at,
     };

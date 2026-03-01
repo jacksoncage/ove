@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { parseMessage, buildPrompt, buildCronPrompt } from "./router";
+import { parseMessage, buildPrompt, buildCronPrompt, parsePriority } from "./router";
 
 describe("parseMessage", () => {
   it("parses PR review command", () => {
@@ -379,5 +379,88 @@ describe("buildCronPrompt", () => {
     const original = "check for security vulnerabilities and fix them";
     const prompt = buildCronPrompt(original);
     expect(prompt).toContain(original);
+  });
+});
+
+describe("parsePriority", () => {
+  it("returns 0 for normal text", () => {
+    const result = parsePriority("fix the login bug");
+    expect(result.priority).toBe(0);
+    expect(result.text).toBe("fix the login bug");
+  });
+
+  it("parses 'urgent:' prefix as priority 2", () => {
+    const result = parsePriority("urgent: fix the login bug");
+    expect(result.priority).toBe(2);
+    expect(result.text).toBe("fix the login bug");
+  });
+
+  it("parses '!important' marker as priority 1", () => {
+    const result = parsePriority("fix the login bug !important");
+    expect(result.priority).toBe(1);
+    expect(result.text).toBe("fix the login bug");
+  });
+
+  it("parses 'p1' as priority 1 (high)", () => {
+    const result = parsePriority("fix the login bug p1");
+    expect(result.priority).toBe(1);
+    expect(result.text).toBe("fix the login bug");
+  });
+
+  it("parses 'p0' as priority 2 (urgent)", () => {
+    const result = parsePriority("p0 fix the login bug");
+    expect(result.priority).toBe(2);
+    expect(result.text).toBe("fix the login bug");
+  });
+
+  it("parses 'p2' as priority 0 (normal)", () => {
+    const result = parsePriority("fix the login bug p2");
+    expect(result.priority).toBe(0);
+  });
+
+  it("parses '--priority high' as priority 1", () => {
+    const result = parsePriority("fix the login bug --priority high");
+    expect(result.priority).toBe(1);
+    expect(result.text).toBe("fix the login bug");
+  });
+
+  it("parses '--priority urgent' as priority 2", () => {
+    const result = parsePriority("fix the login bug --priority urgent");
+    expect(result.priority).toBe(2);
+    expect(result.text).toBe("fix the login bug");
+  });
+
+  it("parses '--priority normal' as priority 0", () => {
+    const result = parsePriority("fix the login bug --priority normal");
+    expect(result.priority).toBe(0);
+    expect(result.text).toBe("fix the login bug");
+  });
+});
+
+describe("parseMessage priority integration", () => {
+  it("default priority is 0", () => {
+    const result = parseMessage("fix issue #15 on infra");
+    expect(result.priority).toBe(0);
+  });
+
+  it("detects urgent: prefix and sets priority 2", () => {
+    const result = parseMessage("urgent: fix the login bug on my-app");
+    expect(result.priority).toBe(2);
+    expect(result.type).toBe("free-form");
+  });
+
+  it("detects !important and sets priority 1", () => {
+    const result = parseMessage("fix issue #15 on infra !important");
+    expect(result.priority).toBe(1);
+  });
+
+  it("detects p1 and sets priority 1", () => {
+    const result = parseMessage("review PR #42 on my-app p1");
+    expect(result.priority).toBe(1);
+  });
+
+  it("detects --priority urgent and sets priority 2", () => {
+    const result = parseMessage("fix the login bug on my-app --priority urgent");
+    expect(result.priority).toBe(2);
   });
 });

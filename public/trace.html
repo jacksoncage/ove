@@ -225,6 +225,9 @@
     .badge-completed { background: var(--green-dim); color: var(--green); }
     .badge-failed    { background: var(--red-dim); color: var(--red); }
 
+    .badge-priority-2 { background: var(--red-dim); color: var(--red); }
+    .badge-priority-1 { background: var(--amber-dim); color: var(--amber); }
+
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.6; }
@@ -745,6 +748,11 @@
 
         var rowTop = el("div", "task-row-top");
         rowTop.appendChild(el("span", "badge badge-" + task.status, task.status));
+        if (task.priority === 2) {
+          rowTop.appendChild(el("span", "badge badge-priority-2", "urgent"));
+        } else if (task.priority === 1) {
+          rowTop.appendChild(el("span", "badge badge-priority-1", "high"));
+        }
         rowTop.appendChild(el("span", "task-repo", task.repo));
         rowTop.appendChild(el("span", "task-time", fmtTime(task.createdAt)));
         item.appendChild(rowTop);
@@ -768,10 +776,12 @@
 
       // Meta row: user, repo, status, timestamps
       var meta = el("div", "ctx-meta");
+      var priorityLabel = task.priority === 2 ? "urgent" : task.priority === 1 ? "high" : "normal";
       var items = [
         ["user", task.userId],
         ["repo", task.repo],
         ["status", task.status],
+        ["priority", priorityLabel],
         ["created", fmtTimeFull(task.createdAt)],
       ];
       if (task.completedAt) {

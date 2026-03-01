@@ -85,6 +85,33 @@ describe("HttpApiAdapter", () => {
     expect(result.result).toBe("Done. Fixed it.");
   });
 
+  test("GET /api/tasks includes priority field", async () => {
+    // Enqueue a task with a specific priority via the queue directly
+    const db = new Database(":memory:");
+    const queue = new TaskQueue(db);
+    const taskId = queue.enqueue({ userId: "u1", repo: "test/repo", prompt: "do stuff", priority: 5 });
+
+    // Create a separate adapter with this queue
+    const { HttpApiAdapter } = await import("./http");
+    const trace = new TraceStore(db);
+    const taskAdapter = new HttpApiAdapter(19877, API_KEY, trace, queue);
+    await taskAdapter.start(() => {});
+
+    try {
+      const res = await fetch(`http://localhost:19877/api/tasks`, {
+        headers: { "X-API-Key": API_KEY },
+      });
+      expect(res.status).toBe(200);
+      const tasks = await res.json();
+      expect(tasks.length).toBeGreaterThan(0);
+      const task = tasks.find((t: any) => t.id === taskId);
+      expect(task).toBeDefined();
+      expect(task.priority).toBe(5);
+    } finally {
+      await taskAdapter.stop();
+    }
+  });
+
   test("serves web UI at /", async () => {
     const res = await fetch(`http://localhost:${TEST_PORT}/`);
     expect(res.status).toBe(200);

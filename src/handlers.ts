@@ -455,6 +455,7 @@ async function handleCreateProject(msg: IncomingMessage, parsed: ParsedMessage, 
     repo: projectName,
     prompt,
     taskType: "create-project",
+    priority: parsed.priority,
   });
 
   deps.pendingReplies.set(taskId, msg);
@@ -526,6 +527,7 @@ async function handleTaskMessage(msg: IncomingMessage, parsed: ParsedMessage, de
     userId: msg.userId,
     repo: parsed.repo,
     prompt,
+    priority: parsed.priority,
   });
 
   deps.pendingReplies.set(taskId, msg);
@@ -534,7 +536,7 @@ async function handleTaskMessage(msg: IncomingMessage, parsed: ParsedMessage, de
   if (stats.running > 0 || stats.pending > 1) {
     await msg.reply(`Queued — ${stats.pending} task${stats.pending > 1 ? "s" : ""} ahead.`);
   }
-  logger.info("task enqueued", { taskId, repo: parsed.repo, type: parsed.type });
+  logger.info("task enqueued", { taskId, repo: parsed.repo, type: parsed.type, priority: parsed.priority });
 }
 
 export function createMessageHandler(deps: HandlerDeps): (msg: IncomingMessage) => Promise<void> {
@@ -621,9 +623,10 @@ export function createEventHandler(deps: HandlerDeps): (event: IncomingEvent, ad
       userId: event.userId,
       repo: parsed.repo,
       prompt,
+      priority: parsed.priority,
     });
 
     deps.pendingEventReplies.set(taskId, { adapter, event });
-    logger.info("event task enqueued", { taskId, eventId: event.eventId, repo: parsed.repo });
+    logger.info("event task enqueued", { taskId, eventId: event.eventId, repo: parsed.repo, priority: parsed.priority });
   };
 }
