@@ -7,10 +7,12 @@ describe("adapter wiring", () => {
     const discord = await import("./discord");
     const http = await import("./http");
     const github = await import("./github");
+    const slack = await import("./slack");
 
     expect(telegram.TelegramAdapter).toBeDefined();
     expect(discord.DiscordAdapter).toBeDefined();
     expect(http.HttpApiAdapter).toBeDefined();
     expect(github.GitHubAdapter).toBeDefined();
+    expect(slack.SlackAdapter).toBeDefined();
   });
 });
