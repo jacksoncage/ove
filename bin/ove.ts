@@ -3,7 +3,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { validateConfig, runSetup } from "../src/setup";
+import { validateConfig, runSetup, runDiagnostics, printDiagnostics } from "../src/setup";
+import { loadConfig } from "../src/config";
 
 async function checkForUpdate(): Promise<void> {
   try {
@@ -37,7 +38,41 @@ if (command === "init") {
     }
   }
   await runSetup();
+
+  // Run diagnostics after init
+  process.stdout.write("\n  Checking environment...\n");
+  const config = loadConfig();
+  const results = await runDiagnostics(config);
+  printDiagnostics(results);
+  const failures = results.filter(r => r.status === "fail");
+  if (failures.length > 0) {
+    process.stdout.write(`\n  ${failures.length} issue(s) found. Run 'ove doctor' for details.\n`);
+  }
+  process.stdout.write("\n");
   process.exit(0);
+}
+
+if (command === "doctor") {
+  process.stdout.write("\n  Checking environment...\n");
+  const config = loadConfig();
+  const results = await runDiagnostics(config);
+  printDiagnostics(results);
+
+  const failures = results.filter(r => r.status === "fail");
+  const warnings = results.filter(r => r.status === "warn");
+  process.stdout.write("\n");
+  if (failures.length === 0 && warnings.length === 0) {
+    process.stdout.write("  All checks passed.\n\n");
+  } else {
+    if (failures.length > 0) {
+      process.stdout.write(`  ${failures.length} error(s)`);
+    }
+    if (warnings.length > 0) {
+      process.stdout.write(`${failures.length > 0 ? ", " : "  "}${warnings.length} warning(s)`);
+    }
+    process.stdout.write("\n\n");
+  }
+  process.exit(failures.length > 0 ? 1 : 0);
 }
 
 if (command === "start" || !command) {
@@ -74,6 +109,7 @@ Usage:
   ove              Start Ove (auto-detects Slack/CLI from env)
   ove start        Same as above
   ove init         Interactive setup — creates config.json and .env
+  ove doctor       Check environment, tools, and connections
   ove help         Show this message
 
 Environment:

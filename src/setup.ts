@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, accessSync, constants } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { userInfo } from "node:os";
@@ -8,6 +8,165 @@ import type { Config } from "./config";
 interface ValidationResult {
   valid: boolean;
   issues: string[];
+}
+
+export interface DiagnosticResult {
+  name: string;
+  status: "pass" | "fail" | "warn";
+  message: string;
+}
+
+export interface DiagnosticDeps {
+  which: (cmd: string) => string | null;
+  fetch: typeof globalThis.fetch;
+  spawn: typeof Bun.spawn;
+  accessSync: typeof accessSync;
+  existsSync: typeof existsSync;
+}
+
+const defaultDeps: DiagnosticDeps = {
+  which: (cmd: string) => Bun.which(cmd),
+  fetch: globalThis.fetch,
+  spawn: Bun.spawn,
+  accessSync,
+  existsSync,
+};
+
+export async function runDiagnostics(config: Config, deps: DiagnosticDeps = defaultDeps): Promise<DiagnosticResult[]> {
+  const results: DiagnosticResult[] = [];
+
+  // Check git installed
+  const gitPath = deps.which("git");
+  if (gitPath) {
+    let version = "";
+    try {
+      const proc = deps.spawn(["git", "--version"], { stdout: "pipe", stderr: "pipe" });
+      await proc.exited;
+      version = await new Response(proc.stdout).text();
+      const match = version.match(/(\d+\.\d+[\.\d]*)/);
+      results.push({ name: "git", status: "pass", message: `git installed (${match ? match[1] : "unknown version"})` });
+    } catch {
+      results.push({ name: "git", status: "pass", message: "git installed" });
+    }
+  } else {
+    results.push({ name: "git", status: "fail", message: "git not found" });
+  }
+
+  // Check runner CLI installed (claude or codex)
+  const runnerName = config.runner?.name || "claude";
+  const runnerCmd = runnerName === "codex" ? "codex" : "claude";
+  const runnerPath = deps.which(runnerCmd);
+  if (runnerPath) {
+    results.push({ name: runnerCmd, status: "pass", message: `${runnerCmd} CLI installed` });
+  } else {
+    results.push({ name: runnerCmd, status: "fail", message: `${runnerCmd} CLI not found` });
+  }
+
+  // Check gh CLI installed (if GitHub sync configured)
+  const hasGitHubSync = !!(config.github?.orgs && config.github.orgs.length > 0);
+  const hasGitHubPoll = !!process.env.GITHUB_POLL_REPOS;
+  if (hasGitHubSync || hasGitHubPoll) {
+    const ghPath = deps.which("gh");
+    if (ghPath) {
+      results.push({ name: "gh", status: "pass", message: "gh CLI installed" });
+    } else {
+      results.push({ name: "gh", status: "warn", message: "gh CLI not found (GitHub sync will not work)" });
+    }
+  }
+
+  // Check SSH access to GitHub
+  try {
+    const proc = deps.spawn(
+      ["ssh", "-T", "git@github.com", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const exitCode = await proc.exited;
+    // GitHub SSH returns exit code 1 with "successfully authenticated" on success
+    const stderr = await new Response(proc.stderr).text();
+    if (exitCode === 0 || exitCode === 1 && stderr.includes("successfully authenticated")) {
+      results.push({ name: "ssh", status: "pass", message: "SSH access to github.com" });
+    } else {
+      results.push({ name: "ssh", status: "warn", message: "SSH access to github.com failed (HTTPS clones still work)" });
+    }
+  } catch {
+    results.push({ name: "ssh", status: "warn", message: "SSH access to github.com failed (HTTPS clones still work)" });
+  }
+
+  // Check REPOS_DIR exists and is writable
+  const reposDir = config.reposDir;
+  if (deps.existsSync(reposDir)) {
+    try {
+      deps.accessSync(reposDir, constants.W_OK);
+      results.push({ name: "repos_dir", status: "pass", message: `REPOS_DIR ${reposDir} exists and is writable` });
+    } catch {
+      results.push({ name: "repos_dir", status: "fail", message: `REPOS_DIR ${reposDir} exists but is not writable` });
+    }
+  } else {
+    results.push({ name: "repos_dir", status: "fail", message: `REPOS_DIR ${reposDir} does not exist` });
+  }
+
+  // Check bot token validity via API calls
+  const slackToken = process.env.SLACK_BOT_TOKEN;
+  if (slackToken && slackToken !== "xoxb-...") {
+    try {
+      const res = await deps.fetch("https://slack.com/api/auth.test", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${slackToken}`, "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(5000),
+      });
+      const data = await res.json() as { ok: boolean };
+      if (data.ok) {
+        results.push({ name: "slack", status: "pass", message: "Slack bot token is valid" });
+      } else {
+        results.push({ name: "slack", status: "fail", message: "Slack bot token is invalid" });
+      }
+    } catch {
+      results.push({ name: "slack", status: "warn", message: "Could not verify Slack bot token (network error)" });
+    }
+  }
+
+  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (telegramToken) {
+    try {
+      const res = await deps.fetch(`https://api.telegram.org/bot${telegramToken}/getMe`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      const data = await res.json() as { ok: boolean };
+      if (data.ok) {
+        results.push({ name: "telegram", status: "pass", message: "Telegram bot token is valid" });
+      } else {
+        results.push({ name: "telegram", status: "fail", message: "Telegram bot token is invalid" });
+      }
+    } catch {
+      results.push({ name: "telegram", status: "warn", message: "Could not verify Telegram bot token (network error)" });
+    }
+  }
+
+  const discordToken = process.env.DISCORD_BOT_TOKEN;
+  if (discordToken) {
+    try {
+      const res = await deps.fetch("https://discord.com/api/v10/users/@me", {
+        headers: { Authorization: `Bot ${discordToken}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        results.push({ name: "discord", status: "pass", message: "Discord bot token is valid" });
+      } else {
+        results.push({ name: "discord", status: "fail", message: "Discord bot token is invalid" });
+      }
+    } catch {
+      results.push({ name: "discord", status: "warn", message: "Could not verify Discord bot token (network error)" });
+    }
+  }
+
+  return results;
+}
+
+export function printDiagnostics(results: DiagnosticResult[]): void {
+  const icons = { pass: "\u2713", fail: "\u2717", warn: "\u26A0" };
+  for (const r of results) {
+    process.stdout.write(`  ${icons[r.status]} ${r.message}\n`);
+  }
 }
 
 export function validateConfig(opts?: { configPath?: string; envPath?: string }): ValidationResult {
