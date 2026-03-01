@@ -63,7 +63,6 @@ export class CliAdapter implements ChatAdapter {
         process.exit(0);
       }
 
-      // Reset status log for new message
       this.statusLines = [];
       this.statusLinesShown = 0;
 
@@ -87,7 +86,6 @@ export class CliAdapter implements ChatAdapter {
     });
 
     this.rl.on("close", () => {
-      // Don't exit immediately — let worker loop finish pending tasks
       console.log("\n(stdin closed, waiting for pending tasks to finish...)");
     });
   }

@@ -93,16 +93,17 @@ export class TaskQueue {
   }
 
   complete(id: string, result: string) {
-    this.db.run(
-      `UPDATE tasks SET status = 'completed', result = ?, completed_at = ? WHERE id = ?`,
-      [result, new Date().toISOString(), id]
-    );
+    this.finish(id, "completed", result);
   }
 
   fail(id: string, error: string) {
+    this.finish(id, "failed", error);
+  }
+
+  private finish(id: string, status: "completed" | "failed", result: string) {
     this.db.run(
-      `UPDATE tasks SET status = 'failed', result = ?, completed_at = ? WHERE id = ?`,
-      [error, new Date().toISOString(), id]
+      `UPDATE tasks SET status = ?, result = ?, completed_at = ? WHERE id = ?`,
+      [status, result, new Date().toISOString(), id]
     );
   }
 
@@ -121,7 +122,7 @@ export class TaskQueue {
   }
 
   stats(): { pending: number; running: number; completed: number; failed: number } {
-    const row = this.db
+    return this.db
       .query(
         `SELECT
           COUNT(*) FILTER (WHERE status = 'pending') as pending,
@@ -131,7 +132,6 @@ export class TaskQueue {
         FROM tasks`
       )
       .get() as { pending: number; running: number; completed: number; failed: number };
-    return row;
   }
 
   metrics(): {
@@ -213,20 +213,10 @@ export class TaskQueue {
   }
 
   cancel(id: string): boolean {
-    const result = this.db.run(
+    return this.db.run(
       `UPDATE tasks SET status = 'failed', result = 'Cancelled', completed_at = ? WHERE id = ? AND status IN ('running', 'pending')`,
       [new Date().toISOString(), id]
-    );
-    return result.changes > 0;
-  }
-
-  listRecentFailed(limit: number = 20): Task[] {
-    const rows = this.db
-      .query(
-        `SELECT * FROM tasks WHERE status = 'failed' ORDER BY completed_at DESC LIMIT ?`
-      )
-      .all(limit) as TaskRow[];
-    return rows.map((r) => this.rowToTask(r));
+    ).changes > 0;
   }
 
   listRecent(limit: number = 20, status?: string): Task[] {
@@ -243,11 +233,10 @@ export class TaskQueue {
   }
 
   resetStale(): number {
-    const result = this.db.run(
+    return this.db.run(
       `UPDATE tasks SET status = 'failed', result = 'Interrupted — process restarted', completed_at = ? WHERE status = 'running'`,
       [new Date().toISOString()]
-    );
-    return result.changes;
+    ).changes;
   }
 
   private rowToTask(row: TaskRow): Task {

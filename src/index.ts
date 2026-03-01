@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { loadConfig } from "./config";
-import { TaskQueue } from "./queue";
+import { TaskQueue, type Task } from "./queue";
 import { RepoManager } from "./repos";
 import { ClaudeRunner } from "./runners/claude";
 import { CodexRunner } from "./runners/codex";
@@ -12,8 +12,7 @@ import { TelegramAdapter } from "./adapters/telegram";
 import { DiscordAdapter } from "./adapters/discord";
 import { HttpApiAdapter } from "./adapters/http";
 import { GitHubAdapter } from "./adapters/github";
-import type { ChatAdapter, IncomingMessage } from "./adapters/types";
-import type { EventAdapter, IncomingEvent } from "./adapters/types";
+import type { ChatAdapter, IncomingMessage, EventAdapter, IncomingEvent } from "./adapters/types";
 import type { AgentRunner, RunOptions } from "./runner";
 import { logger } from "./logger";
 import { RepoRegistry, syncGitHub } from "./repo-registry";
@@ -23,7 +22,6 @@ import { startCronLoop } from "./cron";
 import { ScheduleStore } from "./schedules";
 import { createMessageHandler, createEventHandler } from "./handlers";
 import { createWorker } from "./worker";
-import type { Task } from "./queue";
 
 const config = loadConfig();
 const db = new Database(process.env.DB_PATH || "./ove.db");
@@ -35,7 +33,6 @@ const trace = new TraceStore(db);
 const schedules = new ScheduleStore(db);
 const repoRegistry = new RepoRegistry(db);
 
-// Migrate existing config repos to SQLite
 repoRegistry.migrateFromConfig(
   Object.fromEntries(
     Object.entries(config.repos)
@@ -49,31 +46,19 @@ const runners = new Map<string, AgentRunner>();
 function getRunner(name: string = "claude"): AgentRunner {
   let r = runners.get(name);
   if (!r) {
-    switch (name) {
-      case "codex":
-        r = new CodexRunner();
-        break;
-      case "claude":
-      default:
-        r = new ClaudeRunner();
-        break;
-    }
+    r = name === "codex" ? new CodexRunner() : new ClaudeRunner();
     runners.set(name, r);
   }
   return r;
 }
 
 function getRunnerForRepo(repo: string): AgentRunner {
-  const repoRunner = config.repos[repo]?.runner;
-  const globalRunner = config.runner;
-  const name = repoRunner?.name || globalRunner?.name || "claude";
+  const name = config.repos[repo]?.runner?.name || config.runner?.name || "claude";
   return getRunner(name);
 }
 
 function getRunnerOptsForRepo(repo: string, baseOpts: RunOptions): RunOptions {
-  const repoRunner = config.repos[repo]?.runner;
-  const globalRunner = config.runner;
-  const model = repoRunner?.model || globalRunner?.model;
+  const model = config.repos[repo]?.runner?.model || config.runner?.model;
   return model ? { ...baseOpts, model } : baseOpts;
 }
 
@@ -102,12 +87,10 @@ async function startGitHubSync() {
   }, interval);
 }
 
-// Shared state maps
 const pendingReplies = new Map<string, IncomingMessage>();
 const pendingEventReplies = new Map<string, { adapter: EventAdapter; event: IncomingEvent }>();
 const runningProcesses = new Map<string, { abort: AbortController; task: Task }>();
 
-// Start adapters based on available env vars
 const adapters: ChatAdapter[] = [];
 
 if (process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN) {
@@ -131,7 +114,6 @@ if (process.env.DISCORD_BOT_TOKEN) {
   adapters.push(new DiscordAdapter(process.env.DISCORD_BOT_TOKEN));
 }
 
-// Event adapters
 const eventAdapters: EventAdapter[] = [];
 
 if (process.env.HTTP_API_PORT) {
@@ -153,15 +135,12 @@ if (process.env.GITHUB_POLL_REPOS) {
   eventAdapters.push(new GitHubAdapter(ghRepos, botName, pollMs));
 }
 
-// CLI mode — enabled by default when no other adapters are configured, or explicitly with CLI_MODE=true
 if (process.env.CLI_MODE === "true" || (adapters.length === 0 && eventAdapters.length === 0)) {
   const cliUserId = Object.keys(config.users)[0] || "cli:local";
   adapters.push(new CliAdapter(cliUserId));
 }
 
-// Main
 async function main() {
-  // Capture stale tasks before resetting so we can notify users
   const staleTasks = queue.listActive().filter((t) => t.status === "running");
   const staleCount = queue.resetStale();
   if (staleCount > 0) {
@@ -174,7 +153,7 @@ async function main() {
     logger.warn("initial github sync failed", { error: String(err) })
   );
 
-  const handleMessage = createMessageHandler({
+  const handlerDeps = {
     config,
     queue,
     sessions,
@@ -187,29 +166,16 @@ async function main() {
     getRunner,
     getRunnerForRepo,
     getRepoInfo,
-  });
+  };
 
-  const handleEvent = createEventHandler({
-    config,
-    queue,
-    sessions,
-    schedules,
-    repoRegistry,
-    trace,
-    pendingReplies,
-    pendingEventReplies,
-    runningProcesses,
-    getRunner,
-    getRunnerForRepo,
-    getRepoInfo,
-  });
+  const handleMessage = createMessageHandler(handlerDeps);
+  const handleEvent = createEventHandler(handlerDeps);
 
   for (const adapter of adapters) {
     await adapter.start(handleMessage);
   }
 
   for (const ea of eventAdapters) {
-    // Wire up chat handler for HTTP adapter so web UI gets full chat features
     if (ea instanceof HttpApiAdapter) {
       ea.setMessageHandler(handleMessage);
       ea.setAdapters(adapters, eventAdapters);
@@ -256,7 +222,6 @@ async function main() {
   });
   worker.start();
 
-  // Notify users whose tasks were interrupted by restart
   if (staleTasks.length > 0) {
     for (const task of staleTasks) {
       const platform = task.userId.split(":")[0];

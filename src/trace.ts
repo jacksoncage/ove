@@ -63,9 +63,4 @@ export class TraceStore {
       detail: r.detail,
     }));
   }
-
-  cleanup(olderThanDays: number = 7) {
-    const cutoff = new Date(Date.now() - olderThanDays * 86_400_000).toISOString();
-    this.db.run(`DELETE FROM task_traces WHERE ts < ?`, [cutoff]);
-  }
 }

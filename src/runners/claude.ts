@@ -2,33 +2,18 @@ import type { AgentRunner, RunOptions, RunResult, StatusCallback } from "../runn
 import { logger } from "../logger";
 import { which } from "bun";
 import { realpathSync } from "node:fs";
-
-const TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-
-function withTimeout(proc: { exited: Promise<number>; kill(): void }): Promise<number | "timeout"> {
-  return Promise.race([
-    proc.exited,
-    new Promise<"timeout">((resolve) =>
-      setTimeout(() => {
-        proc.kill();
-        resolve("timeout");
-      }, TIMEOUT_MS)
-    ),
-  ]);
-}
+import { TIMEOUT_MS, withTimeout } from "./timeout";
 
 export function summarizeToolInput(name: string, input: any): string {
   if (!input) return "";
   switch (name) {
     case "Read":
-      return input.file_path || "";
-    case "Bash":
-      return input.command || "";
     case "Edit":
     case "Write":
       return input.file_path || "";
+    case "Bash":
+      return input.command || "";
     case "Grep":
-      return input.pattern || "";
     case "Glob":
       return input.pattern || "";
     default: {
@@ -44,12 +29,10 @@ export class ClaudeRunner implements AgentRunner {
 
   constructor() {
     const found = which("claude");
-    // Resolve symlinks so Bun.spawn can find the actual binary
     this.claudePath = found ? realpathSync(found) : "claude";
   }
 
   buildArgs(prompt: string, opts: RunOptions): string[] {
-    // stream-json requires --verbose in claude CLI
     const args = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--max-turns", String(opts.maxTurns), "--dangerously-skip-permissions", "--disallowed-tools", "AskUserQuestion"];
     if (opts.mcpConfigPath) args.push("--mcp-config", opts.mcpConfigPath);
     return args;
@@ -102,9 +85,7 @@ export class ClaudeRunner implements AgentRunner {
                 }
               }
             }
-          } catch {
-            // Non-JSON line in stream output — skip
-          }
+          } catch {}
         }
       }
     } finally {

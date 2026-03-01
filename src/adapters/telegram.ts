@@ -3,20 +3,13 @@ import type { ChatAdapter, IncomingMessage, AdapterStatus } from "./types";
 import { logger } from "../logger";
 import { debounce } from "./debounce";
 
-/** Convert simple markdown (*bold*, `code`, ```blocks```) to Telegram HTML */
 function mdToHtml(text: string): string {
-  // Escape HTML entities first
-  let html = text
+  return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-
-  return html
-    // Code blocks first (```lang\n...\n```)
+    .replace(/>/g, '&gt;')
     .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre>$2</pre>')
-    // Inline code
     .replace(/`([^`]+)`/g, '<code>$1</code>')
-    // Bold **text** or *text*
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/\*(.+?)\*/g, '<b>$1</b>');
 }
@@ -43,7 +36,7 @@ export class TelegramAdapter implements ChatAdapter {
       let lastStatusText: string | undefined;
 
       const doUpdate = debounce(async (statusText: string) => {
-        if (statusText === lastStatusText) return; // skip unchanged text
+        if (statusText === lastStatusText) return;
         lastStatusText = statusText;
         const html = mdToHtml(statusText);
         try {
@@ -63,7 +56,6 @@ export class TelegramAdapter implements ChatAdapter {
         platform: "telegram",
         text,
         reply: async (replyText: string) => {
-          // Delete status message and send a new one so the user gets a notification
           if (statusMsgId) {
             try {
               await ctx.api.deleteMessage(chatId, statusMsgId);

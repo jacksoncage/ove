@@ -28,8 +28,13 @@ export interface WorkerDeps {
 }
 
 function findAdapterForUser(userId: string, adapters: ChatAdapter[]): ChatAdapter | undefined {
-  const platform = userId.split(":")[0]; // e.g. "telegram", "slack", "discord"
+  const platform = userId.split(":")[0];
   return adapters.find((a) => a.constructor.name.toLowerCase().includes(platform));
+}
+
+function cancelDebouncedStatus(msg: IncomingMessage | undefined) {
+  const fn = msg?.updateStatus as DebouncedFunction<any> | undefined;
+  if (fn?.cancel) fn.cancel();
 }
 
 async function replyWithFallback(
@@ -70,10 +75,9 @@ async function processTask(task: Task, deps: WorkerDeps) {
 
   const originalMsg = deps.pendingReplies.get(task.id);
   const statusLog: string[] = [];
-  const trace = deps.trace;
   const startTime = Date.now();
 
-  trace.append(task.id, "lifecycle", "Task started", task.prompt);
+  deps.trace.append(task.id, "lifecycle", "Task started", task.prompt);
 
   try {
     await originalMsg?.updateStatus(`Working on it...`);
@@ -102,9 +106,9 @@ async function processTask(task: Task, deps: WorkerDeps) {
       }
 
       const taskRunner = deps.getRunnerForRepo(task.repo);
-      // Cron tasks are autonomous — give them plenty of room to finish
-      const baseTurns = deps.config.claude.maxTurns;
-      const maxTurns = task.taskType === "cron" ? Math.max(baseTurns, 100) : baseTurns;
+      const maxTurns = task.taskType === "cron"
+        ? Math.max(deps.config.claude.maxTurns, 100)
+        : deps.config.claude.maxTurns;
       const runOpts = deps.getRunnerOptsForRepo(task.repo, {
         maxTurns,
         mcpConfigPath,
@@ -117,13 +121,13 @@ async function processTask(task: Task, deps: WorkerDeps) {
         runOpts,
         (event: StatusEvent) => {
           if (event.kind === "tool") {
-            const last = statusLog[statusLog.length - 1];
+            const last = statusLog.at(-1);
             const summary = `Using ${event.tool}...`;
             if (last !== summary) statusLog.push(summary);
-            trace.append(task.id, "tool", summary, event.input.slice(0, 2000));
+            deps.trace.append(task.id, "tool", summary, event.input.slice(0, 2000));
           } else {
             statusLog.push(event.text.slice(0, 200));
-            trace.append(task.id, "status", event.text.slice(0, 200));
+            deps.trace.append(task.id, "status", event.text.slice(0, 200));
           }
           originalMsg?.updateStatus(statusLog.slice(-5).join("\n"));
         }
@@ -137,51 +141,43 @@ async function processTask(task: Task, deps: WorkerDeps) {
         }
       }
 
-      // Cancel any pending debounced status update before sending final reply
-      const updateFn = originalMsg?.updateStatus as DebouncedFunction<any> | undefined;
-      if (updateFn?.cancel) updateFn.cancel();
+      cancelDebouncedStatus(originalMsg);
+      deps.trace.append(task.id, "output", "Runner output", result.output.slice(0, 10_000));
 
-      trace.append(task.id, "output", "Runner output", result.output.slice(0, 10_000));
+      const elapsed = Date.now() - startTime;
+      const outcome = result.success ? "completed" : "failed";
 
       if (result.success) {
         deps.queue.complete(task.id, result.output);
         logger.info("task completed", { taskId: task.id, durationMs: result.durationMs });
 
         const platform = originalMsg?.platform || "slack";
-        const isCron = task.taskType === "cron";
-        const replyText = isCron
+        const replyText = task.taskType === "cron"
           ? `[Scheduled: ${task.repo}]\n${result.output}`
           : result.output;
-        const parts = splitAndReply(replyText, platform);
-        for (const part of parts) {
+        for (const part of splitAndReply(replyText, platform)) {
           await replyWithFallback(part, originalMsg, task.userId, deps.adapters);
         }
-        trace.append(task.id, "lifecycle", "Reply sent");
+        deps.trace.append(task.id, "lifecycle", "Reply sent");
         deps.sessions.addMessage(task.userId, "assistant", result.output.slice(0, 500));
-
-        const eventReply = deps.pendingEventReplies.get(task.id);
-        if (eventReply) {
-          await eventReply.adapter.respondToEvent(eventReply.event.eventId, result.output);
-          deps.pendingEventReplies.delete(task.id);
-        }
-
-        const elapsed = Date.now() - startTime;
-        trace.append(task.id, "lifecycle", `Task completed in ${elapsed}ms`);
       } else {
         deps.queue.fail(task.id, result.output);
         logger.error("task failed", { taskId: task.id });
         await replyWithFallback(`Task failed: ${result.output.slice(0, 500)}`, originalMsg, task.userId, deps.adapters);
         deps.sessions.addMessage(task.userId, "assistant", `Task failed: ${result.output.slice(0, 200)}`);
-
-        const eventReply = deps.pendingEventReplies.get(task.id);
-        if (eventReply) {
-          await eventReply.adapter.respondToEvent(eventReply.event.eventId, `Task failed: ${result.output.slice(0, 500)}`);
-          deps.pendingEventReplies.delete(task.id);
-        }
-
-        const elapsed = Date.now() - startTime;
-        trace.append(task.id, "lifecycle", `Task failed in ${elapsed}ms`, result.output.slice(0, 2000));
       }
+
+      const eventReply = deps.pendingEventReplies.get(task.id);
+      if (eventReply) {
+        const eventOutput = result.success ? result.output : `Task failed: ${result.output.slice(0, 500)}`;
+        await eventReply.adapter.respondToEvent(eventReply.event.eventId, eventOutput);
+        deps.pendingEventReplies.delete(task.id);
+      }
+
+      deps.trace.append(
+        task.id, "lifecycle", `Task ${outcome} in ${elapsed}ms`,
+        result.success ? undefined : result.output.slice(0, 2000),
+      );
     } finally {
       if (!isCreateProject) {
         await deps.repos.removeWorktree(task.repo, task.id).catch(() => {});
@@ -190,9 +186,8 @@ async function processTask(task: Task, deps: WorkerDeps) {
   } catch (err) {
     deps.queue.fail(task.id, String(err));
     logger.error("task processing error", { taskId: task.id, error: String(err) });
-    trace.append(task.id, "error", "Task processing error", String(err).slice(0, 2000));
-    const updateFn = originalMsg?.updateStatus as DebouncedFunction<any> | undefined;
-    if (updateFn?.cancel) updateFn.cancel();
+    deps.trace.append(task.id, "error", "Task processing error", String(err).slice(0, 2000));
+    cancelDebouncedStatus(originalMsg);
     await replyWithFallback(`Task error: ${String(err).slice(0, 500)}`, originalMsg, task.userId, deps.adapters);
   } finally {
     deps.runningProcesses.delete(task.id);

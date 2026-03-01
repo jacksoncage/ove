@@ -50,17 +50,13 @@ export function checkCron(
   const minuteKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`;
   if (firedMinutes.has(minuteKey)) return;
 
-  let triggered = false;
-  for (const task of tasks) {
-    if (shouldRun(task.schedule, now)) {
-      logger.info("cron triggered", { schedule: task.schedule, repo: task.repo });
-      onTrigger(task);
-      triggered = true;
-    }
+  const matched = tasks.filter((task) => shouldRun(task.schedule, now));
+  for (const task of matched) {
+    logger.info("cron triggered", { schedule: task.schedule, repo: task.repo });
+    onTrigger(task);
   }
-  if (triggered) {
+  if (matched.length > 0) {
     firedMinutes.add(minuteKey);
-    // Keep set from growing forever
     if (firedMinutes.size > 5) {
       const first = firedMinutes.values().next().value;
       if (first) firedMinutes.delete(first);

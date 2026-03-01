@@ -1,12 +1,21 @@
 import { readFileSync, existsSync } from "node:fs";
-import { join, extname, resolve } from "node:path";
-import { timingSafeEqual, createHmac } from "node:crypto";
+import { extname, join, resolve } from "node:path";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { EventAdapter, IncomingEvent, IncomingMessage, ChatAdapter, AdapterStatus, EventSource } from "./types";
 import { parseMention } from "./github";
 import type { TraceStore } from "../trace";
 import type { TaskQueue } from "../queue";
 import type { SessionStore } from "../sessions";
 import { logger } from "../logger";
+
+const MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".svg": "image/svg+xml",
+  ".jpg": "image/jpeg",
+  ".css": "text/css",
+  ".js": "application/javascript",
+};
 
 interface PendingChat {
   status: "pending" | "completed";
@@ -27,6 +36,14 @@ function verifyGitHubSignature(secret: string, rawBody: string, signature: strin
   return safeEqual(expected, signature);
 }
 
+function loadHtml(path: string, fallbackName: string): string {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch {
+    return `<html><body><p>${fallbackName} not found. Place public/${fallbackName} in project root.</p></body></html>`;
+  }
+}
+
 export class HttpApiAdapter implements EventAdapter {
   private port: number;
   private apiKey: string;
@@ -37,10 +54,7 @@ export class HttpApiAdapter implements EventAdapter {
   private onEvent?: (event: IncomingEvent) => void;
   private onMessage?: (msg: IncomingMessage) => void;
   private chats = new Map<string, PendingChat>();
-  private webUiHtml: string;
-  private traceUiHtml: string;
-  private statusUiHtml: string;
-  private metricsUiHtml: string;
+  private htmlPages: Record<string, string>;
   private publicDir: string;
   private chatAdapters: ChatAdapter[] = [];
   private eventAdapters: EventAdapter[] = [];
@@ -65,27 +79,19 @@ export class HttpApiAdapter implements EventAdapter {
     this.sessions = sessions || null;
     this.githubWebhookSecret = githubWebhookSecret || process.env.GITHUB_WEBHOOK_SECRET || "";
     this.botName = botName || process.env.GITHUB_BOT_NAME || "ove";
-    const publicDir = resolve(import.meta.dir, "../../public");
-    this.publicDir = publicDir;
-    try {
-      this.webUiHtml = readFileSync(join(publicDir, "index.html"), "utf-8");
-    } catch {
-      this.webUiHtml = "<html><body><p>Web UI not found. Place public/index.html in project root.</p></body></html>";
-    }
-    try {
-      this.traceUiHtml = readFileSync(join(publicDir, "trace.html"), "utf-8");
-    } catch {
-      this.traceUiHtml = "<html><body><p>Trace viewer not found. Place public/trace.html in project root.</p></body></html>";
-    }
-    try {
-      this.statusUiHtml = readFileSync(join(publicDir, "status.html"), "utf-8");
-    } catch {
-      this.statusUiHtml = "<html><body><p>Status page not found. Place public/status.html in project root.</p></body></html>";
-    }
-    try {
-      this.metricsUiHtml = readFileSync(join(publicDir, "metrics.html"), "utf-8");
-    } catch {
-      this.metricsUiHtml = "<html><body><p>Metrics page not found. Place public/metrics.html in project root.</p></body></html>";
+    this.publicDir = resolve(import.meta.dir, "../../public");
+    this.htmlPages = {
+      "/": "index.html",
+      "/index.html": "index.html",
+      "/trace": "trace.html",
+      "/trace.html": "trace.html",
+      "/status": "status.html",
+      "/status.html": "status.html",
+      "/metrics": "metrics.html",
+      "/metrics.html": "metrics.html",
+    };
+    for (const [route, file] of Object.entries(this.htmlPages)) {
+      this.htmlPages[route] = loadHtml(join(this.publicDir, file), file);
     }
   }
 
@@ -98,6 +104,17 @@ export class HttpApiAdapter implements EventAdapter {
   setAdapters(chat: ChatAdapter[], event: EventAdapter[]): void {
     this.chatAdapters = chat;
     this.eventAdapters = event;
+  }
+
+  private collectAdapterStatuses(): AdapterStatus[] {
+    const statuses: AdapterStatus[] = [];
+    for (const a of this.chatAdapters) {
+      statuses.push(a.getStatus?.() ?? { name: a.constructor.name, type: "chat", status: "unknown" });
+    }
+    for (const a of this.eventAdapters) {
+      statuses.push(a.getStatus?.() ?? { name: a.constructor.name, type: "event", status: "unknown" });
+    }
+    return statuses;
   }
 
   getStatus(): AdapterStatus {
@@ -122,29 +139,10 @@ export class HttpApiAdapter implements EventAdapter {
         const url = new URL(req.url);
         const path = url.pathname;
 
-        // Web UI — no auth required
-        if (path === "/" || path === "/index.html") {
-          return new Response(self.webUiHtml, {
-            headers: { "Content-Type": "text/html" },
-          });
-        }
-
-        if (path === "/trace" || path === "/trace.html") {
-          return new Response(self.traceUiHtml, {
-            headers: { "Content-Type": "text/html" },
-          });
-        }
-
-        if (path === "/status" || path === "/status.html") {
-          return new Response(self.statusUiHtml, {
-            headers: { "Content-Type": "text/html" },
-          });
-        }
-
-        if (path === "/metrics" || path === "/metrics.html") {
-          return new Response(self.metricsUiHtml, {
-            headers: { "Content-Type": "text/html" },
-          });
+        // Web UI pages — no auth required
+        const htmlPage = self.htmlPages[path];
+        if (htmlPage) {
+          return new Response(htmlPage, { headers: { "Content-Type": "text/html" } });
         }
 
         // POST /api/webhooks/github — GitHub webhook with HMAC-SHA256 signature validation
@@ -204,22 +202,11 @@ export class HttpApiAdapter implements EventAdapter {
             return Response.json({ ok: true, skipped: true, reason: "No mention found" });
           }
 
-          // Determine source type and issue/PR number
-          let sourceType: "issue" | "pr";
-          let number: number;
-
-          if (githubEvent === "pull_request_review_comment") {
-            sourceType = "pr";
-            number = payload.pull_request?.number;
-          } else {
-            // issue_comment can be on issues or PRs
-            if (payload.issue?.pull_request) {
-              sourceType = "pr";
-            } else {
-              sourceType = "issue";
-            }
-            number = payload.issue?.number;
-          }
+          const isPR = githubEvent === "pull_request_review_comment" || !!payload.issue?.pull_request;
+          const sourceType: "issue" | "pr" = isPR ? "pr" : "issue";
+          const number: number = githubEvent === "pull_request_review_comment"
+            ? payload.pull_request?.number
+            : payload.issue?.number;
 
           if (!number) {
             return Response.json({ error: "Could not determine issue/PR number" }, { status: 400 });
@@ -299,16 +286,9 @@ export class HttpApiAdapter implements EventAdapter {
 
         // GET /api/status — adapter health + queue stats
         if (path === "/api/status" && req.method === "GET") {
-          const adapterStatuses: AdapterStatus[] = [];
-          for (const a of self.chatAdapters) {
-            adapterStatuses.push(a.getStatus?.() ?? { name: a.constructor.name, type: "chat", status: "unknown" });
-          }
-          for (const a of self.eventAdapters) {
-            adapterStatuses.push(a.getStatus?.() ?? { name: a.constructor.name, type: "event", status: "unknown" });
-          }
           const queueStats = self.queue?.stats() ?? { pending: 0, running: 0, completed: 0, failed: 0 };
           return Response.json({
-            adapters: adapterStatuses,
+            adapters: self.collectAdapterStatuses(),
             queue: queueStats,
             uptime: process.uptime(),
             timestamp: new Date().toISOString(),
@@ -320,17 +300,9 @@ export class HttpApiAdapter implements EventAdapter {
           if (!self.queue) {
             return Response.json({ error: "Task queue not available" }, { status: 503 });
           }
-          const adapterStatuses: AdapterStatus[] = [];
-          for (const a of self.chatAdapters) {
-            adapterStatuses.push(a.getStatus?.() ?? { name: a.constructor.name, type: "chat", status: "unknown" });
-          }
-          for (const a of self.eventAdapters) {
-            adapterStatuses.push(a.getStatus?.() ?? { name: a.constructor.name, type: "event", status: "unknown" });
-          }
-          const metrics = self.queue.metrics();
           return Response.json({
-            ...metrics,
-            adapters: adapterStatuses,
+            ...self.queue.metrics(),
+            adapters: self.collectAdapterStatuses(),
             uptime: process.uptime(),
             timestamp: new Date().toISOString(),
           });
@@ -372,12 +344,8 @@ export class HttpApiAdapter implements EventAdapter {
             return Response.json({ error: "Task is not cancellable", status: task.status }, { status: 409 });
           }
 
-          // If it's running, abort the process
-          if (task.status === "running" && self.runningProcesses) {
-            const entry = self.runningProcesses.get(taskId);
-            if (entry) {
-              entry.abort.abort();
-            }
+          if (task.status === "running") {
+            self.runningProcesses?.get(taskId)?.abort.abort();
           }
 
           self.queue.cancel(taskId);
@@ -404,15 +372,7 @@ export class HttpApiAdapter implements EventAdapter {
           const chat: PendingChat = { status: "pending", replies: [], sseControllers: [] };
           self.chats.set(chatId, chat);
 
-          function notifySSE(data: object) {
-            const payload = JSON.stringify(data);
-            for (const ctrl of chat.sseControllers) {
-              try { ctrl.enqueue(`data: ${payload}\n\n`); } catch {}
-            }
-          }
-
           if (self.onMessage) {
-            // Route through full chat handler (commands, session, repo resolution, etc.)
             let closeTimer: ReturnType<typeof setTimeout> | null = null;
             const msg: IncomingMessage = {
               userId,
@@ -421,8 +381,7 @@ export class HttpApiAdapter implements EventAdapter {
               reply: async (text: string) => {
                 chat.replies.push(text);
                 chat.status = "completed";
-                notifySSE({ status: "completed", result: chat.replies.join("\n\n") });
-                // Delay closing SSE to allow multiple split replies to arrive
+                self.broadcastSSE(chat, { status: "completed", result: chat.replies.join("\n\n") });
                 if (closeTimer) clearTimeout(closeTimer);
                 closeTimer = setTimeout(() => {
                   for (const ctrl of chat.sseControllers) {
@@ -434,7 +393,7 @@ export class HttpApiAdapter implements EventAdapter {
               },
               updateStatus: async (text: string) => {
                 chat.statusText = text;
-                notifySSE({ status: "pending", statusText: text });
+                self.broadcastSSE(chat, { status: "pending", statusText: text });
               },
             };
             self.onMessage(msg);
@@ -525,7 +484,6 @@ export class HttpApiAdapter implements EventAdapter {
         }
 
         // Static files from public/
-        const MIME: Record<string, string> = { ".png": "image/png", ".ico": "image/x-icon", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".css": "text/css", ".js": "application/javascript" };
         const ext = extname(path);
         if (ext && MIME[ext]) {
           const filePath = resolve(self.publicDir, "." + path);
@@ -551,42 +509,32 @@ export class HttpApiAdapter implements EventAdapter {
     logger.info("http api adapter stopped");
   }
 
+  private broadcastSSE(chat: PendingChat, data: object): void {
+    const payload = `data: ${JSON.stringify(data)}\n\n`;
+    for (const controller of chat.sseControllers) {
+      try { controller.enqueue(payload); } catch {}
+    }
+  }
+
   async respondToEvent(eventId: string, text: string): Promise<void> {
     const chat = this.chats.get(eventId);
     if (!chat) return;
 
     chat.status = "completed";
     chat.replies.push(text);
+    this.broadcastSSE(chat, { status: "completed", result: chat.replies.join("\n\n") });
 
-    // Notify SSE listeners
-    const data = JSON.stringify({ status: "completed", result: chat.replies.join("\n\n") });
     for (const controller of chat.sseControllers) {
-      try {
-        controller.enqueue(`data: ${data}\n\n`);
-        controller.close();
-      } catch (err) {
-        logger.debug("sse enqueue failed", { eventId, error: String(err) });
-      }
+      try { controller.close(); } catch {}
     }
     chat.sseControllers = [];
-
-    // Clean up after 5 minutes
     setTimeout(() => this.chats.delete(eventId), 5 * 60 * 1000);
   }
 
-  /** Called by index.ts to push status updates to SSE clients */
   updateEventStatus(eventId: string, statusText: string): void {
     const chat = this.chats.get(eventId);
     if (!chat) return;
     chat.statusText = statusText;
-
-    const data = JSON.stringify({ status: "pending", statusText });
-    for (const controller of chat.sseControllers) {
-      try {
-        controller.enqueue(`data: ${data}\n\n`);
-      } catch (err) {
-        logger.debug("sse status update failed", { eventId, error: String(err) });
-      }
-    }
+    this.broadcastSSE(chat, { status: "pending", statusText });
   }
 }

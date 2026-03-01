@@ -68,9 +68,7 @@ export class SessionStore {
     const row = this.db
       .query(`SELECT mode FROM user_modes WHERE user_id = ?`)
       .get(userId) as { mode: string } | null;
-    if (!row) return "strict";
-    if (row.mode === "assistant" || row.mode === "strict") return row.mode;
-    return "strict";
+    return row?.mode === "assistant" ? "assistant" : "strict";
   }
 
   setMode(userId: string, mode: UserMode): void {

@@ -26,22 +26,18 @@ export class SlackAdapter implements ChatAdapter {
   ): IncomingMessage {
     let statusMsgTs: string | undefined;
 
+    const sendNew = async (statusText: string) => {
+      const result = await say(statusText);
+      if (result && "ts" in result) statusMsgTs = result.ts;
+    };
+
     const doUpdate = debounce(async (statusText: string) => {
-      if (statusMsgTs) {
-        try {
-          await this.app.client.chat.update({
-            channel,
-            ts: statusMsgTs,
-            text: statusText,
-          });
-        } catch (err) {
-          logger.warn("slack status update failed", { error: String(err) });
-          const result = await say(statusText);
-          if (result && "ts" in result) statusMsgTs = result.ts;
-        }
-      } else {
-        const result = await say(statusText);
-        if (result && "ts" in result) statusMsgTs = result.ts;
+      if (!statusMsgTs) return sendNew(statusText);
+      try {
+        await this.app.client.chat.update({ channel, ts: statusMsgTs, text: statusText });
+      } catch (err) {
+        logger.warn("slack status update failed", { error: String(err) });
+        await sendNew(statusText);
       }
     }, 3000);
 
@@ -59,7 +55,6 @@ export class SlackAdapter implements ChatAdapter {
   async start(onMessage: (msg: IncomingMessage) => void): Promise<void> {
     this.onMessage = onMessage;
 
-    // Listen for DMs
     this.app.message(async ({ message, say }) => {
       if (message.subtype) return;
       if (!("text" in message) || !message.text) return;
@@ -75,7 +70,6 @@ export class SlackAdapter implements ChatAdapter {
       this.onMessage?.(msg);
     });
 
-    // Listen for app mentions in channels
     this.app.event("app_mention", async ({ event, say }) => {
       const text = event.text.replace(/<@[A-Z0-9]+>/g, "").trim();
       const msg = this.buildMessage(

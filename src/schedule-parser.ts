@@ -25,7 +25,6 @@ User message: "${message}"`;
 
 export function parseScheduleResponse(response: string): ParsedSchedule | null {
   try {
-    // Strip markdown code fences if present
     let cleaned = response.trim();
     const fenceMatch = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
     if (fenceMatch) cleaned = fenceMatch[1].trim();
