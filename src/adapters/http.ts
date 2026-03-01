@@ -1,7 +1,8 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
-import { timingSafeEqual } from "node:crypto";
-import type { EventAdapter, IncomingEvent, IncomingMessage, ChatAdapter, AdapterStatus } from "./types";
+import { timingSafeEqual, createHmac } from "node:crypto";
+import type { EventAdapter, IncomingEvent, IncomingMessage, ChatAdapter, AdapterStatus, EventSource } from "./types";
+import { parseMention } from "./github";
 import type { TraceStore } from "../trace";
 import type { TaskQueue } from "../queue";
 import type { SessionStore } from "../sessions";
@@ -21,6 +22,11 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(bufA, bufB);
 }
 
+function verifyGitHubSignature(secret: string, rawBody: string, signature: string): boolean {
+  const expected = "sha256=" + createHmac("sha256", secret).update(rawBody).digest("hex");
+  return safeEqual(expected, signature);
+}
+
 export class HttpApiAdapter implements EventAdapter {
   private port: number;
   private apiKey: string;
@@ -38,16 +44,20 @@ export class HttpApiAdapter implements EventAdapter {
   private chatAdapters: ChatAdapter[] = [];
   private eventAdapters: EventAdapter[] = [];
   private startedAt?: string;
+  private githubWebhookSecret: string;
+  private botName: string;
 
   private hostname: string;
 
-  constructor(port: number, apiKey: string, trace: TraceStore, queue?: TaskQueue, sessions?: SessionStore, hostname?: string) {
+  constructor(port: number, apiKey: string, trace: TraceStore, queue?: TaskQueue, sessions?: SessionStore, hostname?: string, githubWebhookSecret?: string, botName?: string) {
     this.port = port;
     this.apiKey = apiKey;
     this.hostname = hostname || "0.0.0.0";
     this.trace = trace;
     this.queue = queue || null;
     this.sessions = sessions || null;
+    this.githubWebhookSecret = githubWebhookSecret || process.env.GITHUB_WEBHOOK_SECRET || "";
+    this.botName = botName || process.env.GITHUB_BOT_NAME || "ove";
     const publicDir = resolve(import.meta.dir, "../../public");
     this.publicDir = publicDir;
     try {
@@ -119,12 +129,142 @@ export class HttpApiAdapter implements EventAdapter {
           });
         }
 
+        // POST /api/webhooks/github — GitHub webhook with HMAC-SHA256 signature validation
+        if (path === "/api/webhooks/github" && req.method === "POST") {
+          if (!self.githubWebhookSecret) {
+            return Response.json({ error: "GitHub webhook secret not configured" }, { status: 500 });
+          }
+
+          const signature = req.headers.get("X-Hub-Signature-256");
+          if (!signature) {
+            return Response.json({ error: "Missing signature" }, { status: 401 });
+          }
+
+          const rawBody = await req.text();
+          if (!verifyGitHubSignature(self.githubWebhookSecret, rawBody, signature)) {
+            return Response.json({ error: "Invalid signature" }, { status: 401 });
+          }
+
+          const githubEvent = req.headers.get("X-GitHub-Event");
+          if (githubEvent !== "issue_comment" && githubEvent !== "pull_request_review_comment") {
+            return Response.json({ ok: true, skipped: true, reason: `Unsupported event: ${githubEvent}` });
+          }
+
+          let payload: any;
+          try {
+            payload = JSON.parse(rawBody);
+          } catch {
+            return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+          }
+
+          // Only process created comments
+          if (payload.action !== "created") {
+            return Response.json({ ok: true, skipped: true, reason: `Ignored action: ${payload.action}` });
+          }
+
+          const comment = payload.comment;
+          if (!comment?.body || !comment?.user?.login) {
+            return Response.json({ error: "Missing comment data" }, { status: 400 });
+          }
+
+          const repoFullName = payload.repository?.full_name;
+          if (!repoFullName) {
+            return Response.json({ error: "Missing repository data" }, { status: 400 });
+          }
+
+          // Parse @mention — same logic as github.ts polling adapter
+          const text = parseMention(comment.body, self.botName);
+          if (!text) {
+            return Response.json({ ok: true, skipped: true, reason: "No mention found" });
+          }
+
+          // Determine source type and issue/PR number
+          let sourceType: "issue" | "pr";
+          let number: number;
+
+          if (githubEvent === "pull_request_review_comment") {
+            sourceType = "pr";
+            number = payload.pull_request?.number;
+          } else {
+            // issue_comment can be on issues or PRs
+            if (payload.issue?.pull_request) {
+              sourceType = "pr";
+            } else {
+              sourceType = "issue";
+            }
+            number = payload.issue?.number;
+          }
+
+          if (!number) {
+            return Response.json({ error: "Could not determine issue/PR number" }, { status: 400 });
+          }
+
+          const source: EventSource = { type: sourceType, repo: repoFullName, number };
+          const eventId = `github:${repoFullName}:${sourceType}:${number}`;
+
+          const event: IncomingEvent = {
+            eventId,
+            userId: `github:${comment.user.login}`,
+            platform: "github",
+            source,
+            text,
+          };
+
+          logger.info("github webhook event received", {
+            repo: repoFullName,
+            user: comment.user.login,
+            event: githubEvent,
+            number,
+          });
+
+          self.onEvent?.(event);
+          return Response.json({ ok: true, eventId });
+        }
+
         // Auth check for API routes
         if (path.startsWith("/api/")) {
           const key = req.headers.get("X-API-Key") || url.searchParams.get("key");
           if (!key || !safeEqual(key, self.apiKey)) {
             return Response.json({ error: "Unauthorized" }, { status: 401 });
           }
+        }
+
+        // POST /api/webhooks/generic — generic webhook with API key auth
+        if (path === "/api/webhooks/generic" && req.method === "POST") {
+          let body: { repo: string; text: string; userId?: string };
+          try {
+            body = await req.json() as { repo: string; text: string; userId?: string };
+          } catch {
+            return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+          }
+
+          if (!body || typeof body.repo !== "string" || !body.repo.trim()) {
+            return Response.json({ error: "Missing or invalid 'repo' field" }, { status: 400 });
+          }
+          if (typeof body.text !== "string" || !body.text.trim()) {
+            return Response.json({ error: "Missing or invalid 'text' field" }, { status: 400 });
+          }
+
+          const userId = (body.userId && typeof body.userId === "string") ? body.userId : "webhook:generic";
+          const eventId = `webhook:${crypto.randomUUID()}`;
+
+          const source: EventSource = { type: "http", requestId: eventId };
+          const event: IncomingEvent = {
+            eventId,
+            userId,
+            platform: "webhook",
+            source,
+            text: body.text.trim(),
+          };
+
+          logger.info("generic webhook event received", {
+            repo: body.repo,
+            userId,
+            textLength: body.text.length,
+          });
+
+          self.onEvent?.(event);
+          return Response.json({ ok: true, eventId }, { status: 202 });
         }
 
         // GET /api/status — adapter health + queue stats
