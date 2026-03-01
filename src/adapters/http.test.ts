@@ -6,6 +6,7 @@ import { TaskQueue } from "../queue";
 import type { IncomingEvent } from "./types";
 
 let adapter: any;
+let queue: TaskQueue;
 let receivedEvents: IncomingEvent[];
 const TEST_PORT = 19876;
 const API_KEY = "test-key-123";
@@ -16,7 +17,7 @@ describe("HttpApiAdapter", () => {
     receivedEvents = [];
     const db = new Database(":memory:");
     const trace = new TraceStore(db);
-    const queue = new TaskQueue(db);
+    queue = new TaskQueue(db);
     adapter = new HttpApiAdapter(TEST_PORT, API_KEY, trace, queue);
     await adapter.start((event: IncomingEvent) => {
       receivedEvents.push(event);
@@ -153,11 +154,107 @@ describe("HttpApiAdapter", () => {
     expect(html).toContain("<html");
     expect(html).toContain("metrics");
   });
+
+  // ── Cancel API tests ──
+
+  test("POST /api/tasks/:id/cancel rejects without API key", async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/tasks/fake-id/cancel`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("POST /api/tasks/:id/cancel returns 404 for unknown task", async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/tasks/nonexistent-task-id/cancel`, {
+      method: "POST",
+      headers: { "X-API-Key": API_KEY },
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe("Task not found");
+  });
+
+  test("POST /api/tasks/:id/cancel cancels a pending task", async () => {
+    const taskId = queue.enqueue({
+      userId: "http:web",
+      repo: "test-repo",
+      prompt: "test cancel pending",
+    });
+
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/tasks/${taskId}/cancel`, {
+      method: "POST",
+      headers: { "X-API-Key": API_KEY },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.cancelled).toBe(true);
+    expect(body.taskId).toBe(taskId);
+
+    // Verify it's cancelled in the queue
+    const task = queue.get(taskId);
+    expect(task?.status).toBe("failed");
+    expect(task?.result).toBe("Cancelled");
+  });
+
+  test("POST /api/tasks/:id/cancel returns 409 for already completed task", async () => {
+    const taskId = queue.enqueue({
+      userId: "http:web",
+      repo: "test-repo",
+      prompt: "test cancel completed",
+    });
+    // Complete the task
+    queue.complete(taskId, "done");
+
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/tasks/${taskId}/cancel`, {
+      method: "POST",
+      headers: { "X-API-Key": API_KEY },
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toBe("Task is not cancellable");
+  });
+
+  test("POST /api/tasks/:id/cancel aborts a running task", async () => {
+    const taskId = queue.enqueue({
+      userId: "http:web",
+      repo: "cancel-repo",
+      prompt: "test cancel running",
+    });
+    // Dequeue to make it running
+    queue.dequeue();
+
+    const task = queue.get(taskId);
+    expect(task?.status).toBe("running");
+
+    // Register a mock running process
+    const abortController = new AbortController();
+    const runningProcesses = new Map();
+    runningProcesses.set(taskId, { abort: abortController, task });
+    adapter.setRunningProcesses(runningProcesses);
+
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/tasks/${taskId}/cancel`, {
+      method: "POST",
+      headers: { "X-API-Key": API_KEY },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.cancelled).toBe(true);
+
+    // Verify abort was called
+    expect(abortController.signal.aborted).toBe(true);
+
+    // Verify queue status
+    const updated = queue.get(taskId);
+    expect(updated?.status).toBe("failed");
+    expect(updated?.result).toBe("Cancelled");
+  });
 });
 
 // --- Webhook tests ---
 
-const WEBHOOK_PORT = 19877;
+const WEBHOOK_PORT = 19879;
 const WEBHOOK_API_KEY = "webhook-test-key";
 const WEBHOOK_SECRET = "test-webhook-secret-123";
 const BOT_NAME = "ove";
@@ -443,7 +540,7 @@ describe("GitHub webhook endpoint", () => {
 describe("Generic webhook endpoint", () => {
   let genericAdapter: any;
   let genericEvents: IncomingEvent[];
-  const GENERIC_PORT = 19878;
+  const GENERIC_PORT = 19880;
 
   beforeAll(async () => {
     const { HttpApiAdapter } = await import("./http");

@@ -225,8 +225,23 @@
     .msg.ove { color: var(--text); display: flex; gap: 0.5rem; align-items: flex-start; }
     .msg.ove .ove-avatar { width: 20px; height: 20px; border-radius: 3px; flex-shrink: 0; margin-top: 2px; }
     .msg.ove .ove-text { flex: 1; }
-    .msg.status { color: var(--text-muted); font-size: 0.75rem; }
+    .msg.status { color: var(--text-muted); font-size: 0.75rem; display: flex; align-items: center; gap: 0.5rem; }
     .msg.error { color: var(--red); }
+
+    .cancel-inline-btn {
+      background: none;
+      border: 1px solid var(--red-dim);
+      color: var(--red);
+      font-family: inherit;
+      font-size: 0.65rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+    .cancel-inline-btn:hover { background: var(--red-dim); }
+    .cancel-inline-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .msg.system {
       color: var(--text-muted);
       font-size: 0.7rem;
@@ -274,6 +289,69 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+
+    /* ── Mobile layout ── */
+    @media (max-width: 768px) {
+      header {
+        padding: 0.4rem 0.5rem;
+      }
+
+      .header-left {
+        gap: 0.5rem;
+      }
+
+      .header-left h1 {
+        font-size: 0.75rem;
+      }
+
+      .nav-link {
+        font-size: 0.6rem;
+        padding: 0.15rem 0.35rem;
+      }
+
+      .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 85vw;
+        max-width: 320px;
+        z-index: 100;
+        transform: translateX(0);
+        transition: transform 0.25s ease;
+        border-right: 1px solid var(--border);
+      }
+
+      .sidebar.collapsed {
+        transform: translateX(-100%);
+        width: 85vw;
+        min-width: 0;
+        border-right: none;
+      }
+
+      .sidebar-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 99;
+      }
+
+      .sidebar-overlay.visible {
+        display: block;
+      }
+
+      .layout {
+        position: relative;
+      }
+
+      #input-bar input {
+        font-size: 16px; /* Prevent iOS zoom */
+      }
+    }
   </style>
 </head>
 <body>
@@ -292,6 +370,7 @@
   </header>
 
   <div class="layout">
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
     <div class="sidebar" id="sidebar">
       <div class="sidebar-section" style="flex:1;display:flex;flex-direction:column">
         <div class="sidebar-section-header">
@@ -348,14 +427,35 @@
 
     function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
+    var sidebarOverlayEl = document.getElementById("sidebarOverlay");
+
     // ── Sidebar toggle ──
-    var sidebarHidden = localStorage.getItem("ove-sidebar") === "hidden";
+    var isMobile = window.matchMedia("(max-width: 768px)").matches;
+    var sidebarHidden = isMobile ? true : localStorage.getItem("ove-sidebar") === "hidden";
     if (sidebarHidden) sidebarEl.classList.add("collapsed");
+
+    function updateSidebarOverlay() {
+      var mobile = window.matchMedia("(max-width: 768px)").matches;
+      if (mobile && !sidebarEl.classList.contains("collapsed")) {
+        sidebarOverlayEl.classList.add("visible");
+      } else {
+        sidebarOverlayEl.classList.remove("visible");
+      }
+    }
 
     sidebarToggleEl.addEventListener("click", function () {
       sidebarEl.classList.toggle("collapsed");
       localStorage.setItem("ove-sidebar", sidebarEl.classList.contains("collapsed") ? "hidden" : "visible");
+      updateSidebarOverlay();
     });
+
+    sidebarOverlayEl.addEventListener("click", function () {
+      sidebarEl.classList.add("collapsed");
+      localStorage.setItem("ove-sidebar", "hidden");
+      updateSidebarOverlay();
+    });
+
+    window.addEventListener("resize", updateSidebarOverlay);
 
     // ── Chat messages ──
     function addMsg(text, cls) {
@@ -393,6 +493,60 @@
         var eventId = data.eventId;
 
         var statusDiv = addMsg("Working...", "status");
+        var cancelBtn = document.createElement("button");
+        cancelBtn.className = "cancel-inline-btn";
+        cancelBtn.textContent = "cancel";
+        statusDiv.appendChild(cancelBtn);
+
+        // We need to find the task ID from the most recent tasks
+        var currentTaskId = null;
+        cancelBtn.addEventListener("click", async function () {
+          cancelBtn.disabled = true;
+          cancelBtn.textContent = "cancelling...";
+          // Try to find the running task for this user
+          if (!currentTaskId) {
+            try {
+              var tasksRes = await fetch("/api/tasks?status=running&limit=5&key=" + encodeURIComponent(API_KEY), { headers: apiHeaders() });
+              if (tasksRes.ok) {
+                var tasks = await tasksRes.json();
+                var userTask = tasks.find(function (t) { return t.userId === "http:web"; });
+                if (userTask) currentTaskId = userTask.id;
+              }
+            } catch (e) {}
+          }
+          if (!currentTaskId) {
+            try {
+              var tasksRes = await fetch("/api/tasks?status=pending&limit=5&key=" + encodeURIComponent(API_KEY), { headers: apiHeaders() });
+              if (tasksRes.ok) {
+                var tasks = await tasksRes.json();
+                var userTask = tasks.find(function (t) { return t.userId === "http:web"; });
+                if (userTask) currentTaskId = userTask.id;
+              }
+            } catch (e) {}
+          }
+          if (currentTaskId) {
+            try {
+              var cancelRes = await fetch("/api/tasks/" + encodeURIComponent(currentTaskId) + "/cancel", {
+                method: "POST",
+                headers: apiHeaders(),
+              });
+              if (cancelRes.ok) {
+                statusDiv.remove();
+                addMsg("Task cancelled.", "status");
+                sse.close();
+              } else {
+                cancelBtn.textContent = "failed";
+                setTimeout(function () { cancelBtn.textContent = "cancel"; cancelBtn.disabled = false; }, 2000);
+              }
+            } catch (e) {
+              cancelBtn.textContent = "error";
+              setTimeout(function () { cancelBtn.textContent = "cancel"; cancelBtn.disabled = false; }, 2000);
+            }
+          } else {
+            cancelBtn.textContent = "no task found";
+            setTimeout(function () { cancelBtn.textContent = "cancel"; cancelBtn.disabled = false; }, 2000);
+          }
+        });
 
         var sse = new EventSource("/api/message/" + eventId + "/stream?key=" + encodeURIComponent(API_KEY));
         sse.onmessage = function (e) {
@@ -404,7 +558,13 @@
             // Refresh sidebar
             fetchHistory();
           } else if (d.statusText) {
-            statusDiv.textContent = d.statusText;
+            // Update status text but keep cancel button
+            var statusText = statusDiv.firstChild;
+            if (statusText && statusText.nodeType === Node.TEXT_NODE) {
+              statusText.textContent = d.statusText;
+            } else {
+              statusDiv.insertBefore(document.createTextNode(d.statusText), statusDiv.firstChild);
+            }
           }
         };
         sse.onerror = function () { sse.close(); };

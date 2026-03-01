@@ -47,8 +47,14 @@ export class HttpApiAdapter implements EventAdapter {
   private startedAt?: string;
   private githubWebhookSecret: string;
   private botName: string;
+  private runningProcesses: Map<string, { abort: AbortController; task: any }> | null = null;
 
   private hostname: string;
+
+  /** Register the running processes map so the cancel endpoint can abort running tasks */
+  setRunningProcesses(processes: Map<string, { abort: AbortController; task: any }>): void {
+    this.runningProcesses = processes;
+  }
 
   constructor(port: number, apiKey: string, trace: TraceStore, queue?: TaskQueue, sessions?: SessionStore, hostname?: string, githubWebhookSecret?: string, botName?: string) {
     this.port = port;
@@ -139,7 +145,6 @@ export class HttpApiAdapter implements EventAdapter {
           return new Response(self.metricsUiHtml, {
             headers: { "Content-Type": "text/html" },
           });
-        }
         }
 
         // Auth check for API routes
@@ -250,6 +255,33 @@ export class HttpApiAdapter implements EventAdapter {
             createdAt: t.createdAt,
             completedAt: t.completedAt,
           })));
+        }
+
+        // POST /api/tasks/:id/cancel — cancel a running or pending task
+        const cancelMatch = path.match(/^\/api\/tasks\/([^/]+)\/cancel$/);
+        if (cancelMatch && req.method === "POST") {
+          if (!self.queue) {
+            return Response.json({ error: "Task queue not available" }, { status: 503 });
+          }
+          const taskId = cancelMatch[1];
+          const task = self.queue.get(taskId);
+          if (!task) {
+            return Response.json({ error: "Task not found" }, { status: 404 });
+          }
+          if (task.status !== "running" && task.status !== "pending") {
+            return Response.json({ error: "Task is not cancellable", status: task.status }, { status: 409 });
+          }
+
+          // If it's running, abort the process
+          if (task.status === "running" && self.runningProcesses) {
+            const entry = self.runningProcesses.get(taskId);
+            if (entry) {
+              entry.abort.abort();
+            }
+          }
+
+          self.queue.cancel(taskId);
+          return Response.json({ ok: true, taskId: task.id, cancelled: true });
         }
 
         // POST /api/message — submit a chat message (full chat pipeline)
