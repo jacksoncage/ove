@@ -85,7 +85,7 @@ export class TaskQueue {
       .query(
         `SELECT * FROM tasks
          WHERE status = 'pending'
-         AND repo NOT IN (SELECT repo FROM tasks WHERE status IN ('running', 'waiting_user'))
+         AND repo NOT IN (SELECT repo FROM tasks WHERE status = 'waiting_user')
          ORDER BY priority DESC, created_at ASC, rowid ASC
          LIMIT 1`
       )
