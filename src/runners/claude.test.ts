@@ -123,3 +123,45 @@ describe("runStreaming", () => {
   });
 });
 
+describe("buildStreamingArgs details", () => {
+  const runner = new ClaudeRunner();
+
+  it("does not include --disallowed-tools at all", () => {
+    const args = runner.buildStreamingArgs("test", { maxTurns: 10 });
+    expect(args).not.toContain("--disallowed-tools");
+  });
+
+  it("includes --input-format stream-json", () => {
+    const args = runner.buildStreamingArgs("test", { maxTurns: 10 });
+    const idx = args.indexOf("--input-format");
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe("stream-json");
+  });
+
+  it("includes --dangerously-skip-permissions", () => {
+    const args = runner.buildStreamingArgs("test", { maxTurns: 10 });
+    expect(args).toContain("--dangerously-skip-permissions");
+  });
+
+  it("includes MCP config when provided", () => {
+    const args = runner.buildStreamingArgs("test", { maxTurns: 10, mcpConfigPath: "/tmp/mcp.json" });
+    expect(args).toContain("--mcp-config");
+    expect(args).toContain("/tmp/mcp.json");
+  });
+});
+
+describe("buildArgs with resume", () => {
+  const runner = new ClaudeRunner();
+
+  it("regular buildArgs still disallows AskUserQuestion", () => {
+    const args = runner.buildArgs("test", { maxTurns: 10 });
+    expect(args).toContain("--disallowed-tools");
+    expect(args).toContain("AskUserQuestion");
+  });
+
+  it("regular buildArgs does NOT include --input-format", () => {
+    const args = runner.buildArgs("test", { maxTurns: 10 });
+    expect(args).not.toContain("--input-format");
+  });
+});
+

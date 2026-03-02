@@ -344,6 +344,23 @@ describe("TaskQueue", () => {
     });
   });
 
+  it("cancel works on waiting_user tasks", () => {
+    const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+    queue.dequeue();
+    queue.setWaiting(id, "waiting_user");
+    const cancelled = queue.cancel(id);
+    expect(cancelled).toBe(true);
+    expect(queue.get(id)?.status).toBe("failed");
+  });
+
+  it("stats counts waiting_user tasks", () => {
+    const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+    queue.dequeue();
+    queue.setWaiting(id, "waiting_user");
+    const stats = queue.stats();
+    expect(stats.waiting).toBe(1);
+  });
+
   describe("sessionId tracking", () => {
     it("stores sessionId via setSessionId", () => {
       const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });

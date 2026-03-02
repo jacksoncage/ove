@@ -517,6 +517,56 @@ describe("reply routing to waiting sessions", () => {
     expect(clearedTaskIds).toEqual(["task-waiting"]);
   });
 
+  it("resumes the queue task when routing reply to waiting session", async () => {
+    const mockSessionManager = {
+      getWaitingForUser: (userId: string) => userId === "slack:U123"
+        ? { taskId: "task-waiting", session: { sendMessage: () => {} } }
+        : null,
+      clearWaiting: () => {},
+    };
+
+    const deps = makeDeps({
+      sessionManager: mockSessionManager as any,
+    });
+
+    // Create a task in waiting_user state
+    const id = deps.queue.enqueue({ userId: "slack:U123", repo: "my-app", prompt: "original" });
+    deps.queue.dequeue(); // running
+
+    // Override the mock to return the real task ID
+    (mockSessionManager as any).getWaitingForUser = (userId: string) => userId === "slack:U123"
+      ? { taskId: id, session: { sendMessage: () => {} } }
+      : null;
+
+    deps.queue.setWaiting(id, "waiting_user");
+    expect(deps.queue.get(id)?.status).toBe("waiting_user");
+
+    const handler = createMessageHandler(deps);
+    const msg = makeMessage("yes do it");
+    await handler(msg);
+
+    // Queue task should be resumed (back to running)
+    expect(deps.queue.get(id)?.status).toBe("running");
+  });
+
+  it("adds user message to session history even when routing to waiting session", async () => {
+    const mockSessionManager = {
+      getWaitingForUser: () => ({ taskId: "t1", session: { sendMessage: () => {} } }),
+      clearWaiting: () => {},
+    };
+
+    const deps = makeDeps({
+      sessionManager: mockSessionManager as any,
+    });
+
+    const handler = createMessageHandler(deps);
+    const msg = makeMessage("my reply");
+    await handler(msg);
+
+    const history = deps.sessions.getHistory("slack:U123");
+    expect(history.some(h => h.content === "my reply")).toBe(true);
+  });
+
   it("falls through to normal handling when no waiting session", async () => {
     const mockSessionManager = {
       getWaitingForUser: () => null,
