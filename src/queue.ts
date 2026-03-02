@@ -17,6 +17,7 @@ export interface Task {
   result: string | null;
   taskType: string | null;
   priority: number;
+  sessionId: string | null;
   createdAt: string;
   completedAt: string | null;
 }
@@ -30,6 +31,7 @@ interface TaskRow {
   result: string | null;
   task_type: string | null;
   priority: number;
+  session_id: string | null;
   created_at: string;
   completed_at: string | null;
 }
@@ -61,6 +63,10 @@ export class TaskQueue {
     // Migration: add priority column if missing (backward compat)
     if (!columns.some(c => c.name === "priority")) {
       this.db.run("ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0");
+    }
+    // Migration: add session_id column if missing (backward compat)
+    if (!columns.some(c => c.name === "session_id")) {
+      this.db.run("ALTER TABLE tasks ADD COLUMN session_id TEXT");
     }
   }
 
@@ -124,6 +130,10 @@ export class TaskQueue {
       `UPDATE tasks SET status = 'running' WHERE id = ? AND status = 'waiting_user'`,
       [id]
     );
+  }
+
+  setSessionId(id: string, sessionId: string) {
+    this.db.run(`UPDATE tasks SET session_id = ? WHERE id = ?`, [sessionId, id]);
   }
 
   getWaitingForUser(userId: string): Task | null {
@@ -271,6 +281,7 @@ export class TaskQueue {
       result: row.result,
       taskType: row.task_type || null,
       priority: row.priority ?? 0,
+      sessionId: row.session_id || null,
       createdAt: row.created_at,
       completedAt: row.completed_at,
     };

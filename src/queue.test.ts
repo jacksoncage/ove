@@ -343,4 +343,19 @@ describe("TaskQueue", () => {
       expect(waiting).toBeNull();
     });
   });
+
+  describe("sessionId tracking", () => {
+    it("stores sessionId via setSessionId", () => {
+      const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+      queue.setSessionId(id, "ses-abc-123");
+      const task = queue.get(id);
+      expect(task?.sessionId).toBe("ses-abc-123");
+    });
+
+    it("sessionId is null by default", () => {
+      const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+      const task = queue.get(id);
+      expect(task?.sessionId).toBeNull();
+    });
+  });
 });
