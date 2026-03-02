@@ -197,21 +197,17 @@ async function processTask(task: Task, deps: WorkerDeps) {
 
 export function createWorker(deps: WorkerDeps): { start: () => void; cancel: (id: string) => boolean } {
   async function workerLoop() {
-    const maxConcurrent = 5;
-
     while (true) {
-      if (deps.runningProcesses.size < maxConcurrent) {
-        try {
-          const task = deps.queue.dequeue();
-          if (task) {
-            processTask(task, deps).catch((err) =>
-              logger.error("worker task error", { taskId: task.id, error: String(err) })
-            );
-            continue;
-          }
-        } catch (err) {
-          logger.error("worker loop error", { error: String(err) });
+      try {
+        const task = deps.queue.dequeue();
+        if (task) {
+          processTask(task, deps).catch((err) =>
+            logger.error("worker task error", { taskId: task.id, error: String(err) })
+          );
+          continue;
         }
+      } catch (err) {
+        logger.error("worker loop error", { error: String(err) });
       }
       await Bun.sleep(2000);
     }

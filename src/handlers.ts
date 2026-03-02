@@ -246,9 +246,7 @@ async function handleListTasks(msg: IncomingMessage, deps: HandlerDeps) {
   if (pending.length > 0) {
     lines.push("Pending:");
     for (const t of pending) {
-      const busyRepo = running.some((r) => r.repo === t.repo);
-      const reason = busyRepo ? `waiting — ${t.repo} busy` : "waiting";
-      lines.push(`  ${t.id.slice(0, 7)} — "${t.prompt.slice(0, 60)}" on ${t.repo} (${reason})`);
+      lines.push(`  ${t.id.slice(0, 7)} — "${t.prompt.slice(0, 60)}" on ${t.repo} (waiting)`);
     }
   }
   const reply = lines.join("\n");
