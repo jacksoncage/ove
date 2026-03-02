@@ -186,7 +186,9 @@ async function processTask(task: Task, deps: WorkerDeps) {
       );
     } finally {
       if (!skipRepoSetup) {
-        await deps.repos.removeWorktree(task.repo, task.id).catch(() => {});
+        await deps.repos.removeWorktree(task.repo, task.id).catch((err) => {
+          logger.warn("worktree cleanup failed", { repo: task.repo, taskId: task.id, error: String(err) });
+        });
       }
     }
   } catch (err) {
@@ -203,21 +205,21 @@ async function processTask(task: Task, deps: WorkerDeps) {
 
 export function createWorker(deps: WorkerDeps): { start: () => void; cancel: (id: string) => boolean } {
   async function workerLoop() {
-    const maxConcurrent = 5;
-
     while (true) {
-      if (deps.runningProcesses.size < maxConcurrent) {
-        try {
-          const task = deps.queue.dequeue();
-          if (task) {
-            processTask(task, deps).catch((err) =>
-              logger.error("worker task error", { taskId: task.id, error: String(err) })
-            );
-            continue;
-          }
-        } catch (err) {
-          logger.error("worker loop error", { error: String(err) });
+      try {
+        const task = deps.queue.dequeue();
+        if (task) {
+          processTask(task, deps).catch((err) => {
+            logger.error("worker task error", { taskId: task.id, error: String(err) });
+            deps.queue.fail(task.id, String(err));
+            deps.runningProcesses.delete(task.id);
+            deps.pendingReplies.delete(task.id);
+          });
+          await Bun.sleep(100); // brief pause between spawns to prevent burst
+          continue;
         }
+      } catch (err) {
+        logger.error("worker loop error", { error: String(err) });
       }
       await Bun.sleep(2000);
     }

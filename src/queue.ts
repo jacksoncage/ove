@@ -75,21 +75,22 @@ export class TaskQueue {
   }
 
   dequeue(): Task | null {
-    const row = this.db
-      .query(
-        `SELECT * FROM tasks
-         WHERE status = 'pending'
-         AND repo NOT IN (SELECT repo FROM tasks WHERE status = 'running')
-         ORDER BY priority DESC, created_at ASC, rowid ASC
-         LIMIT 1`
-      )
-      .get() as TaskRow;
+    return this.db.transaction(() => {
+      const row = this.db
+        .query(
+          `SELECT * FROM tasks
+           WHERE status = 'pending'
+           ORDER BY priority DESC, created_at ASC, rowid ASC
+           LIMIT 1`
+        )
+        .get() as TaskRow;
 
-    if (!row) return null;
+      if (!row) return null;
 
-    this.db.run(`UPDATE tasks SET status = 'running' WHERE id = ?`, [row.id]);
+      this.db.run(`UPDATE tasks SET status = 'running' WHERE id = ?`, [row.id]);
 
-    return this.rowToTask({ ...row, status: "running" });
+      return this.rowToTask({ ...row, status: "running" });
+    })();
   }
 
   complete(id: string, result: string) {

@@ -8,7 +8,23 @@ const GIT_ENV = {
 };
 
 export class RepoManager {
+  private repoLocks = new Map<string, Promise<void>>();
+
   constructor(private reposDir: string) {}
+
+  /** Serialize async operations per repo to prevent git lock contention. */
+  private async withRepoLock<T>(repoName: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.repoLocks.get(repoName) ?? Promise.resolve();
+    let resolve: () => void;
+    const next = new Promise<void>((r) => { resolve = r; });
+    this.repoLocks.set(repoName, next);
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      resolve!();
+    }
+  }
 
   repoPath(repoName: string): string {
     return resolve(this.reposDir, repoName);
@@ -19,65 +35,71 @@ export class RepoManager {
   }
 
   async cloneIfNeeded(repoName: string, url: string): Promise<void> {
-    const path = this.repoPath(repoName);
-    const exists = await Bun.file(join(path, ".git/HEAD")).exists();
-    if (exists) {
-      logger.debug("repo already cloned", { repo: repoName });
-      return;
-    }
-    logger.info("cloning repo", { repo: repoName, url });
-    const proc = Bun.spawn(["git", "clone", url, path], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: GIT_ENV,
+    return this.withRepoLock(repoName, async () => {
+      const path = this.repoPath(repoName);
+      const exists = await Bun.file(join(path, ".git/HEAD")).exists();
+      if (exists) {
+        logger.debug("repo already cloned", { repo: repoName });
+        return;
+      }
+      logger.info("cloning repo", { repo: repoName, url });
+      const proc = Bun.spawn(["git", "clone", url, path], {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: GIT_ENV,
+      });
+      const exitCode = await Promise.race([
+        proc.exited,
+        Bun.sleep(GIT_TIMEOUT).then(() => { proc.kill(); return -1; }),
+      ]);
+      if (exitCode !== 0) {
+        const stderr = exitCode === -1 ? "git clone timed out" : await new Response(proc.stderr).text();
+        throw new Error(`git clone failed: ${stderr}`);
+      }
     });
-    const exitCode = await Promise.race([
-      proc.exited,
-      Bun.sleep(GIT_TIMEOUT).then(() => { proc.kill(); return -1; }),
-    ]);
-    if (exitCode !== 0) {
-      const stderr = exitCode === -1 ? "git clone timed out" : await new Response(proc.stderr).text();
-      throw new Error(`git clone failed: ${stderr}`);
-    }
   }
 
   async pull(repoName: string, branch: string = "main"): Promise<void> {
-    const path = this.repoPath(repoName);
-    logger.info("pulling latest", { repo: repoName, branch });
-    const proc = Bun.spawn(["git", "pull", "origin", branch], {
-      cwd: path,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: GIT_ENV,
+    return this.withRepoLock(repoName, async () => {
+      const path = this.repoPath(repoName);
+      logger.info("pulling latest", { repo: repoName, branch });
+      const proc = Bun.spawn(["git", "pull", "origin", branch], {
+        cwd: path,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: GIT_ENV,
+      });
+      const exitCode = await Promise.race([
+        proc.exited,
+        Bun.sleep(GIT_TIMEOUT).then(() => { proc.kill(); return -1; }),
+      ]);
+      if (exitCode !== 0) {
+        const msg = exitCode === -1 ? "git pull timed out" : await new Response(proc.stderr).text();
+        logger.warn("git pull failed", { repo: repoName, error: msg });
+      }
     });
-    const exitCode = await Promise.race([
-      proc.exited,
-      Bun.sleep(GIT_TIMEOUT).then(() => { proc.kill(); return -1; }),
-    ]);
-    if (exitCode !== 0) {
-      const msg = exitCode === -1 ? "git pull timed out" : await new Response(proc.stderr).text();
-      logger.warn("git pull failed", { repo: repoName, error: msg });
-    }
   }
 
   async createWorktree(repoName: string, taskId: string, baseBranch: string = "main"): Promise<string> {
-    const repoDir = this.repoPath(repoName);
-    const wtPath = this.worktreePath(repoName, taskId);
-    const branchName = `agent/${taskId}`;
+    return this.withRepoLock(repoName, async () => {
+      const repoDir = this.repoPath(repoName);
+      const wtPath = this.worktreePath(repoName, taskId);
+      const branchName = `agent/${taskId}`;
 
-    logger.info("creating worktree", { repo: repoName, taskId, path: wtPath });
+      logger.info("creating worktree", { repo: repoName, taskId, path: wtPath });
 
-    const proc = Bun.spawn(
-      ["git", "worktree", "add", "-b", branchName, wtPath, baseBranch],
-      { cwd: repoDir, stdout: "pipe", stderr: "pipe" }
-    );
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text();
-      throw new Error(`git worktree add failed: ${stderr}`);
-    }
+      const proc = Bun.spawn(
+        ["git", "worktree", "add", "-b", branchName, wtPath, baseBranch],
+        { cwd: repoDir, stdout: "pipe", stderr: "pipe" }
+      );
+      const exitCode = await proc.exited;
+      if (exitCode !== 0) {
+        const stderr = await new Response(proc.stderr).text();
+        throw new Error(`git worktree add failed: ${stderr}`);
+      }
 
-    return wtPath;
+      return wtPath;
+    });
   }
 
   async removeWorktree(repoName: string, taskId: string): Promise<void> {

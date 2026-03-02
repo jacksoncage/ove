@@ -68,7 +68,7 @@ describe("TaskQueue", () => {
     expect(tasks.length).toBe(2);
   });
 
-  it("skips repo if another task is running on it", () => {
+  it("allows parallel tasks on the same repo", () => {
     queue.enqueue({ userId: "slack:U123", repo: "my-app", prompt: "task 1" });
     queue.enqueue({ userId: "slack:U123", repo: "my-app", prompt: "task 2" });
 
@@ -76,7 +76,8 @@ describe("TaskQueue", () => {
     expect(first).not.toBeNull();
 
     const second = queue.dequeue();
-    expect(second).toBeNull();
+    expect(second).not.toBeNull();
+    expect(second!.prompt).toBe("task 2");
   });
 
   it("stores and retrieves taskType", () => {
