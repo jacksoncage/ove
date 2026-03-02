@@ -180,7 +180,9 @@ async function processTask(task: Task, deps: WorkerDeps) {
       );
     } finally {
       if (!isCreateProject) {
-        await deps.repos.removeWorktree(task.repo, task.id).catch(() => {});
+        await deps.repos.removeWorktree(task.repo, task.id).catch((err) => {
+          logger.warn("worktree cleanup failed", { repo: task.repo, taskId: task.id, error: String(err) });
+        });
       }
     }
   } catch (err) {
@@ -201,9 +203,13 @@ export function createWorker(deps: WorkerDeps): { start: () => void; cancel: (id
       try {
         const task = deps.queue.dequeue();
         if (task) {
-          processTask(task, deps).catch((err) =>
-            logger.error("worker task error", { taskId: task.id, error: String(err) })
-          );
+          processTask(task, deps).catch((err) => {
+            logger.error("worker task error", { taskId: task.id, error: String(err) });
+            deps.queue.fail(task.id, String(err));
+            deps.runningProcesses.delete(task.id);
+            deps.pendingReplies.delete(task.id);
+          });
+          await Bun.sleep(100); // brief pause between spawns to prevent burst
           continue;
         }
       } catch (err) {
