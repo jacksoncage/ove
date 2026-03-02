@@ -115,3 +115,11 @@ describe("buildArgs resume support", () => {
   });
 });
 
+describe("runStreaming", () => {
+  const runner = new ClaudeRunner();
+
+  it("method exists and is a function", () => {
+    expect(typeof runner.runStreaming).toBe("function");
+  });
+});
+

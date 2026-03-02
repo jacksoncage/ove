@@ -1,4 +1,4 @@
-import type { AgentRunner, RunOptions, RunResult, StatusCallback } from "../runner";
+import type { AgentRunner, RunOptions, RunResult, StatusCallback, StreamEvent, StreamingSession } from "../runner";
 import { logger } from "../logger";
 import { which } from "bun";
 import { realpathSync } from "node:fs";
@@ -126,5 +126,123 @@ export class ClaudeRunner implements AgentRunner {
     const finalOutput = resultText || textBlocks.join("\n\n") || "Task completed (no output)";
     logger.info("claude task completed", { durationMs });
     return { success: true, output: finalOutput, durationMs, sessionId: resultSessionId ?? undefined };
+  }
+
+  runStreaming(
+    prompt: string,
+    workDir: string,
+    opts: RunOptions,
+    onEvent?: (event: StreamEvent) => void,
+  ): StreamingSession {
+    const args = this.buildStreamingArgs(prompt, opts);
+    const startTime = Date.now();
+    logger.info("starting streaming claude task", { workDir, maxTurns: opts.maxTurns });
+
+    const proc = Bun.spawn([this.claudePath, ...args], {
+      cwd: workDir,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, CI: "1" },
+    });
+
+    if (opts.signal) {
+      opts.signal.addEventListener("abort", () => proc.kill(), { once: true });
+    }
+
+    let sessionId: string | null = null;
+    let resultText: string | null = null;
+    const textBlocks: string[] = [];
+
+    const done = (async (): Promise<RunResult> => {
+      const decoder = new TextDecoder();
+      const reader = proc.stdout.getReader();
+      try {
+        while (true) {
+          const { done: isDone, value } = await reader.read();
+          if (isDone) break;
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n").filter(Boolean);
+          for (const line of lines) {
+            try {
+              const msg = JSON.parse(line);
+
+              if (msg.type === "system" && msg.session_id) {
+                sessionId = msg.session_id;
+              }
+
+              if (msg.type === "result" && msg.result) {
+                resultText = msg.result;
+                if (msg.session_id) sessionId = msg.session_id;
+                onEvent?.({ kind: "result", text: msg.result, sessionId: sessionId ?? undefined });
+              }
+
+              if (msg.type === "assistant" && msg.message?.content) {
+                for (const block of msg.message.content) {
+                  if (block.type === "text") {
+                    textBlocks.push(block.text);
+                    onEvent?.({ kind: "text", text: block.text });
+                  }
+                  if (block.type === "tool_use") {
+                    if (block.name === "AskUserQuestion") {
+                      const questions = block.input?.questions;
+                      if (questions?.[0]) {
+                        onEvent?.({
+                          kind: "ask_user",
+                          question: questions[0].question,
+                          options: questions[0].options || [],
+                        });
+                      }
+                    } else {
+                      onEvent?.({
+                        kind: "tool",
+                        tool: block.name,
+                        input: summarizeToolInput(block.name, block.input),
+                      });
+                    }
+                  }
+                }
+              }
+            } catch {}
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      const exitCode = await withTimeout(proc);
+      const durationMs = Date.now() - startTime;
+
+      if (exitCode === "timeout") {
+        return { success: false, output: `Claude task timed out after ${TIMEOUT_MS / 60000} minutes`, durationMs };
+      }
+      if (exitCode !== 0) {
+        const stderr = await new Response(proc.stderr).text();
+        return { success: false, output: stderr || "Claude task failed", durationMs };
+      }
+
+      return {
+        success: true,
+        output: resultText || textBlocks.join("\n\n") || "Task completed (no output)",
+        durationMs,
+        sessionId: sessionId ?? undefined,
+      };
+    })();
+
+    const encoder = new TextEncoder();
+
+    return {
+      sendMessage(text: string) {
+        const msg = JSON.stringify({ type: "user_message", content: text }) + "\n";
+        proc.stdin.write(encoder.encode(msg));
+      },
+      kill() {
+        proc.kill();
+      },
+      get sessionId() {
+        return sessionId;
+      },
+      done,
+    };
   }
 }
