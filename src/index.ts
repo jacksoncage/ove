@@ -22,6 +22,7 @@ import { startCronLoop } from "./cron";
 import { ScheduleStore } from "./schedules";
 import { createMessageHandler, createEventHandler } from "./handlers";
 import { createWorker } from "./worker";
+import { SessionManager } from "./session-manager";
 
 const config = loadConfig();
 const db = new Database(process.env.DB_PATH || "./ove.db");
@@ -32,6 +33,7 @@ const sessions = new SessionStore(db);
 const trace = new TraceStore(db);
 const schedules = new ScheduleStore(db);
 const repoRegistry = new RepoRegistry(db);
+const sessionManager = new SessionManager();
 
 repoRegistry.migrateFromConfig(
   Object.fromEntries(
@@ -166,6 +168,7 @@ async function main() {
     getRunner,
     getRunnerForRepo,
     getRepoInfo,
+    sessionManager,
   };
 
   const handleMessage = createMessageHandler(handlerDeps);
@@ -219,6 +222,7 @@ async function main() {
     getRunnerOptsForRepo,
     getRepoInfo,
     trace,
+    sessionManager,
   });
   worker.start();
 
@@ -244,6 +248,7 @@ async function main() {
     for (const ea of eventAdapters) {
       await ea.stop();
     }
+    sessionManager.killAll();
     process.exit(0);
   }
 
