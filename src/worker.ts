@@ -63,6 +63,44 @@ async function replyWithFallback(
   }
 }
 
+async function checkRecentPR(
+  repoSlug: string,
+  workDir: string
+): Promise<{ prNumber: number; ciStatus: "passed" | "failed" | "pending"; ciDetails: string } | null> {
+  try {
+    const proc = Bun.spawn(
+      ["gh", "pr", "list", "--state", "open", "--author", "@me", "--limit", "1", "--json", "number,statusCheckRollup,headRefName"],
+      { cwd: workDir, stdout: "pipe", stderr: "pipe" }
+    );
+    const text = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) return null;
+
+    const prs = JSON.parse(text);
+    if (prs.length === 0) return null;
+
+    const pr = prs[0];
+    const checks = pr.statusCheckRollup || [];
+    const failed = checks.filter((c: any) => c.conclusion === "FAILURE" || c.conclusion === "ERROR");
+    const pending = checks.filter((c: any) => !c.conclusion || c.conclusion === "PENDING");
+
+    let ciStatus: "passed" | "failed" | "pending";
+    let ciDetails = "";
+    if (failed.length > 0) {
+      ciStatus = "failed";
+      ciDetails = failed.map((c: any) => `${c.name}: ${c.conclusion}`).join(", ");
+    } else if (pending.length > 0) {
+      ciStatus = "pending";
+    } else {
+      ciStatus = "passed";
+    }
+
+    return { prNumber: pr.number, ciStatus, ciDetails };
+  } catch {
+    return null;
+  }
+}
+
 async function processTask(task: Task, deps: WorkerDeps) {
   const isCreateProject = task.taskType === "create-project";
   const isDiscuss = task.taskType === "discuss";
@@ -224,6 +262,72 @@ async function processTask(task: Task, deps: WorkerDeps) {
         task.id, "lifecycle", `Task ${outcome} in ${elapsed}ms`,
         result.success ? undefined : result.output.slice(0, 2000),
       );
+
+      // Autonomous CI retry for cron tasks
+      if (task.taskType === "cron" && result.success && !skipRepoSetup) {
+        const MAX_CI_RETRIES = 3;
+
+        for (let retry = 0; retry < MAX_CI_RETRIES; retry++) {
+          // Wait for CI to start
+          await Bun.sleep(30_000);
+
+          const prStatus = await checkRecentPR(task.repo, workDir);
+          if (!prStatus) break; // No PR found, nothing to check
+          if (prStatus.ciStatus === "passed") break; // CI passed, done
+
+          if (prStatus.ciStatus === "pending") {
+            // Wait longer for pending CI
+            await Bun.sleep(60_000);
+            const recheck = await checkRecentPR(task.repo, workDir);
+            if (!recheck || recheck.ciStatus !== "failed") break;
+            // Update prStatus for the retry prompt
+            Object.assign(prStatus, recheck);
+          }
+
+          // CI failed — retry with resume
+          logger.info("cron task CI failed, retrying", {
+            taskId: task.id,
+            retry: retry + 1,
+            pr: prStatus.prNumber,
+            details: prStatus.ciDetails,
+          });
+          deps.trace.append(task.id, "lifecycle", `CI retry ${retry + 1}/${MAX_CI_RETRIES}`, prStatus.ciDetails);
+
+          const retryPrompt = `CI failed on PR #${prStatus.prNumber}. Failures: ${prStatus.ciDetails}. Fix the issues and push again.`;
+          const currentTask = deps.queue.get(task.id);
+          const retryOpts: RunOptions = {
+            ...runOpts,
+            resumeSessionId: currentTask?.sessionId ?? undefined,
+          };
+
+          const retryResult = await taskRunner.run(retryPrompt, workDir, retryOpts);
+
+          if (!retryResult.success) {
+            logger.error("cron CI retry failed", { taskId: task.id, retry: retry + 1 });
+            deps.trace.append(task.id, "lifecycle", `CI retry ${retry + 1} failed`, retryResult.output.slice(0, 500));
+            break;
+          }
+
+          // Store session ID from retry if available
+          if (retryResult.sessionId) {
+            deps.queue.setSessionId(task.id, retryResult.sessionId);
+          }
+
+          deps.queue.complete(task.id, retryResult.output);
+          await replyWithFallback(
+            `[Scheduled: ${task.repo}] CI retry ${retry + 1}: ${retryResult.output.slice(0, 500)}`,
+            originalMsg,
+            task.userId,
+            deps.adapters,
+          );
+          deps.trace.append(task.id, "lifecycle", `CI retry ${retry + 1} completed`);
+
+          // Check if this retry fixed CI
+          await Bun.sleep(30_000);
+          const postRetry = await checkRecentPR(task.repo, workDir);
+          if (!postRetry || postRetry.ciStatus !== "failed") break;
+        }
+      }
     } finally {
       if (!skipRepoSetup) {
         await deps.repos.removeWorktree(task.repo, task.id).catch((err) => {
