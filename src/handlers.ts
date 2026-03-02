@@ -1,4 +1,3 @@
-import { mkdirSync } from "node:fs";
 import { parseMessage, buildContextualPrompt } from "./router";
 import type { ParsedMessage } from "./router";
 import { isAuthorized, getUserRepos, addRepo, addUser } from "./config";
@@ -382,30 +381,16 @@ async function handleSchedule(msg: IncomingMessage, parsedRepo: string | undefin
 async function handleDiscuss(msg: IncomingMessage, parsed: ParsedMessage, history: { role: string; content: string }[], deps: HandlerDeps) {
   const prompt = buildContextualPrompt(parsed, history, getPersona(msg.userId, deps));
 
-  await msg.updateStatus("Thinking...");
+  const taskId = deps.queue.enqueue({
+    userId: msg.userId,
+    repo: `_discuss:${crypto.randomUUID().slice(0, 8)}`,
+    prompt,
+    taskType: "discuss",
+    priority: parsed.priority,
+  });
 
-  try {
-    mkdirSync(deps.config.reposDir, { recursive: true });
-    const discussRunner = deps.getRunner(deps.config.runner?.name);
-    const result = await discussRunner.run(
-      prompt,
-      deps.config.reposDir,
-      { maxTurns: 5 },
-      (event) => {
-        if (event.kind === "text") {
-          msg.updateStatus(event.text.slice(0, 200));
-        }
-      }
-    );
-
-    const parts = splitAndReply(result.output, msg.platform);
-    for (const part of parts) {
-      await msg.reply(part);
-    }
-    deps.sessions.addMessage(msg.userId, "assistant", result.output.slice(0, 500));
-  } catch (err) {
-    await msg.reply(`Discussion error: ${String(err).slice(0, 500)}`);
-  }
+  deps.pendingReplies.set(taskId, msg);
+  logger.info("task enqueued", { taskId, type: "discuss" });
 }
 
 async function handleCreateProject(msg: IncomingMessage, parsed: ParsedMessage, history: { role: string; content: string }[], deps: HandlerDeps) {
