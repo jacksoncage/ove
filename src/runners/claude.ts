@@ -35,6 +35,21 @@ export class ClaudeRunner implements AgentRunner {
   buildArgs(prompt: string, opts: RunOptions): string[] {
     const args = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--max-turns", String(opts.maxTurns), "--dangerously-skip-permissions", "--disallowed-tools", "AskUserQuestion"];
     if (opts.mcpConfigPath) args.push("--mcp-config", opts.mcpConfigPath);
+    if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
+    return args;
+  }
+
+  buildStreamingArgs(prompt: string, opts: RunOptions): string[] {
+    const args = [
+      "-p", prompt,
+      "--input-format", "stream-json",
+      "--output-format", "stream-json",
+      "--verbose",
+      "--max-turns", String(opts.maxTurns),
+      "--dangerously-skip-permissions",
+    ];
+    if (opts.mcpConfigPath) args.push("--mcp-config", opts.mcpConfigPath);
+    if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
     return args;
   }
 
@@ -55,6 +70,7 @@ export class ClaudeRunner implements AgentRunner {
     }
 
     let resultText: string | null = null;
+    let resultSessionId: string | null = null;
     const textBlocks: string[] = [];
     const decoder = new TextDecoder();
     const reader = proc.stdout.getReader();
@@ -69,6 +85,7 @@ export class ClaudeRunner implements AgentRunner {
             const msg = JSON.parse(line);
             if (msg.type === "result" && msg.result) {
               resultText = msg.result;
+              if (msg.session_id) resultSessionId = msg.session_id;
             }
             if (msg.type === "assistant" && msg.message?.content) {
               for (const block of msg.message.content) {
@@ -108,6 +125,6 @@ export class ClaudeRunner implements AgentRunner {
 
     const finalOutput = resultText || textBlocks.join("\n\n") || "Task completed (no output)";
     logger.info("claude task completed", { durationMs });
-    return { success: true, output: finalOutput, durationMs };
+    return { success: true, output: finalOutput, durationMs, sessionId: resultSessionId ?? undefined };
   }
 }
