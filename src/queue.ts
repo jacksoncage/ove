@@ -80,7 +80,7 @@ export class TaskQueue {
         .query(
           `SELECT * FROM tasks
            WHERE status = 'pending'
-           ORDER BY priority DESC, created_at ASC
+           ORDER BY priority DESC, created_at ASC, rowid ASC
            LIMIT 1`
         )
         .get() as TaskRow;
@@ -116,7 +116,7 @@ export class TaskQueue {
   listByUser(userId: string, limit: number = 10): Task[] {
     const rows = this.db
       .query(
-        `SELECT * FROM tasks WHERE user_id = ? ORDER BY priority DESC, created_at DESC LIMIT ?`
+        `SELECT * FROM tasks WHERE user_id = ? ORDER BY priority DESC, created_at DESC, rowid DESC LIMIT ?`
       )
       .all(userId, limit) as TaskRow[];
     return rows.map((r) => this.rowToTask(r));
@@ -207,7 +207,7 @@ export class TaskQueue {
   listActive(limit: number = 20): Task[] {
     const rows = this.db
       .query(
-        `SELECT * FROM tasks WHERE status IN ('running', 'pending') ORDER BY priority DESC, created_at ASC LIMIT ?`
+        `SELECT * FROM tasks WHERE status IN ('running', 'pending') ORDER BY priority DESC, created_at ASC, rowid ASC LIMIT ?`
       )
       .all(limit) as TaskRow[];
     return rows.map((r) => this.rowToTask(r));
@@ -227,7 +227,7 @@ export class TaskQueue {
       sql += ` WHERE status = ?`;
       params.push(status);
     }
-    sql += ` ORDER BY priority DESC, created_at DESC LIMIT ?`;
+    sql += ` ORDER BY priority DESC, created_at DESC, rowid DESC LIMIT ?`;
     params.push(limit);
     const rows = this.db.query(sql).all(...params) as TaskRow[];
     return rows.map((r) => this.rowToTask(r));
