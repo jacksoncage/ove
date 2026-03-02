@@ -8,8 +8,9 @@ import type { TaskQueue, Task } from "./queue";
 import type { RepoManager } from "./repos";
 import type { SessionStore } from "./sessions";
 import type { IncomingMessage, ChatAdapter, EventAdapter, IncomingEvent } from "./adapters/types";
-import type { AgentRunner, RunOptions, StatusEvent } from "./runner";
+import type { AgentRunner, RunOptions, RunResult, StatusEvent, StreamEvent } from "./runner";
 import type { TraceStore } from "./trace";
+import type { SessionManager } from "./session-manager";
 import type { DebouncedFunction } from "./adapters/debounce";
 
 export interface WorkerDeps {
@@ -25,6 +26,7 @@ export interface WorkerDeps {
   getRunnerOptsForRepo: (repo: string, baseOpts: RunOptions) => RunOptions;
   getRepoInfo: (repoName: string) => { url: string; defaultBranch: string } | null;
   trace: TraceStore;
+  sessionManager: SessionManager;
 }
 
 function findAdapterForUser(userId: string, adapters: ChatAdapter[]): ChatAdapter | undefined {
@@ -121,23 +123,61 @@ async function processTask(task: Task, deps: WorkerDeps) {
         signal: abortController.signal,
       });
 
-      const result = await taskRunner.run(
-        task.prompt,
-        workDir,
-        runOpts,
-        (event: StatusEvent) => {
-          if (event.kind === "tool") {
-            const last = statusLog.at(-1);
-            const summary = `Using ${event.tool}...`;
-            if (last !== summary) statusLog.push(summary);
-            deps.trace.append(task.id, "tool", summary, event.input.slice(0, 2000));
-          } else {
-            statusLog.push(event.text.slice(0, 200));
-            deps.trace.append(task.id, "status", event.text.slice(0, 200));
+      const useStreaming = !isDiscuss && task.taskType !== "cron" && typeof (taskRunner as any).runStreaming === "function";
+
+      let result: RunResult;
+
+      if (useStreaming) {
+        const session = (taskRunner as any).runStreaming(
+          task.prompt,
+          workDir,
+          runOpts,
+          (event: StreamEvent) => {
+            if (event.kind === "tool") {
+              const last = statusLog.at(-1);
+              const summary = `Using ${event.tool}...`;
+              if (last !== summary) statusLog.push(summary);
+              deps.trace.append(task.id, "tool", summary, event.input.slice(0, 2000));
+            } else if (event.kind === "text") {
+              statusLog.push(event.text.slice(0, 200));
+              deps.trace.append(task.id, "status", event.text.slice(0, 200));
+            } else if (event.kind === "ask_user") {
+              deps.queue.setWaiting(task.id, "waiting_user");
+              deps.sessionManager.setWaiting(task.id);
+              deps.trace.append(task.id, "lifecycle", "Waiting for user input", event.question);
+              const questionText = event.options.length > 0
+                ? `${event.question}\n${event.options.map((o, i) => `${i + 1}. ${o.label}${o.description ? ` — ${o.description}` : ""}`).join("\n")}`
+                : event.question;
+              replyWithFallback(questionText, originalMsg, task.userId, deps.adapters);
+            } else if (event.kind === "result" && event.sessionId) {
+              deps.queue.setSessionId(task.id, event.sessionId);
+            }
+            originalMsg?.updateStatus(statusLog.slice(-5).join("\n"));
           }
-          originalMsg?.updateStatus(statusLog.slice(-5).join("\n"));
-        }
-      );
+        );
+
+        deps.sessionManager.register(task.id, task.userId, session);
+        result = await session.done;
+        deps.sessionManager.unregister(task.id);
+      } else {
+        result = await taskRunner.run(
+          task.prompt,
+          workDir,
+          runOpts,
+          (event: StatusEvent) => {
+            if (event.kind === "tool") {
+              const last = statusLog.at(-1);
+              const summary = `Using ${event.tool}...`;
+              if (last !== summary) statusLog.push(summary);
+              deps.trace.append(task.id, "tool", summary, event.input.slice(0, 2000));
+            } else {
+              statusLog.push(event.text.slice(0, 200));
+              deps.trace.append(task.id, "status", event.text.slice(0, 200));
+            }
+            originalMsg?.updateStatus(statusLog.slice(-5).join("\n"));
+          }
+        );
+      }
 
       if (mcpConfigPath) {
         try {
