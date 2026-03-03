@@ -538,7 +538,7 @@ describe("reply routing to waiting sessions", () => {
       ? { taskId: id, session: { sendMessage: () => {} } }
       : null;
 
-    deps.queue.setWaiting(id, "waiting_user");
+    deps.queue.setWaiting(id);
     expect(deps.queue.get(id)?.status).toBe("waiting_user");
 
     const handler = createMessageHandler(deps);

@@ -290,7 +290,7 @@ describe("TaskQueue", () => {
     it("setWaiting transitions running task to waiting_user", () => {
       const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
       queue.dequeue(); // running
-      queue.setWaiting(id, "waiting_user");
+      queue.setWaiting(id);
       const task = queue.get(id);
       expect(task?.status).toBe("waiting_user");
     });
@@ -298,7 +298,7 @@ describe("TaskQueue", () => {
     it("resume transitions waiting_user back to running", () => {
       const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
       queue.dequeue();
-      queue.setWaiting(id, "waiting_user");
+      queue.setWaiting(id);
       queue.resume(id);
       const task = queue.get(id);
       expect(task?.status).toBe("running");
@@ -307,7 +307,7 @@ describe("TaskQueue", () => {
     it("dequeue skips waiting_user tasks", () => {
       const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
       queue.dequeue();
-      queue.setWaiting(id, "waiting_user");
+      queue.setWaiting(id);
       queue.enqueue({ userId: "u1", repo: "r1", prompt: "test2" });
       const next = queue.dequeue();
       expect(next).toBeNull();
@@ -316,7 +316,7 @@ describe("TaskQueue", () => {
     it("resetStale also resets waiting_user tasks", () => {
       const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
       queue.dequeue();
-      queue.setWaiting(id, "waiting_user");
+      queue.setWaiting(id);
       const count = queue.resetStale();
       expect(count).toBe(1);
       expect(queue.get(id)?.status).toBe("failed");
@@ -325,7 +325,7 @@ describe("TaskQueue", () => {
     it("listActive includes waiting_user tasks", () => {
       const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
       queue.dequeue();
-      queue.setWaiting(id, "waiting_user");
+      queue.setWaiting(id);
       const active = queue.listActive();
       expect(active.some(t => t.id === id)).toBe(true);
     });
@@ -333,7 +333,7 @@ describe("TaskQueue", () => {
     it("getWaitingForUser returns waiting_user task for a user", () => {
       const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
       queue.dequeue();
-      queue.setWaiting(id, "waiting_user");
+      queue.setWaiting(id);
       const waiting = queue.getWaitingForUser("u1");
       expect(waiting?.id).toBe(id);
     });
@@ -347,7 +347,7 @@ describe("TaskQueue", () => {
   it("cancel works on waiting_user tasks", () => {
     const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
     queue.dequeue();
-    queue.setWaiting(id, "waiting_user");
+    queue.setWaiting(id);
     const cancelled = queue.cancel(id);
     expect(cancelled).toBe(true);
     expect(queue.get(id)?.status).toBe("failed");
@@ -356,7 +356,7 @@ describe("TaskQueue", () => {
   it("stats counts waiting_user tasks", () => {
     const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
     queue.dequeue();
-    queue.setWaiting(id, "waiting_user");
+    queue.setWaiting(id);
     const stats = queue.stats();
     expect(stats.waiting).toBe(1);
   });

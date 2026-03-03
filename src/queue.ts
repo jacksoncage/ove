@@ -113,15 +113,22 @@ export class TaskQueue {
     );
   }
 
+  updateResult(id: string, result: string) {
+    this.db.run(
+      `UPDATE tasks SET result = ?, completed_at = ? WHERE id = ?`,
+      [result, new Date().toISOString(), id]
+    );
+  }
+
   get(id: string): Task | null {
     const row = this.db.query(`SELECT * FROM tasks WHERE id = ?`).get(id) as TaskRow;
     return row ? this.rowToTask(row) : null;
   }
 
-  setWaiting(id: string, status: "waiting_user") {
+  setWaiting(id: string) {
     this.db.run(
-      `UPDATE tasks SET status = ? WHERE id = ? AND status = 'running'`,
-      [status, id]
+      `UPDATE tasks SET status = 'waiting_user' WHERE id = ? AND status = 'running'`,
+      [id]
     );
   }
 
@@ -171,7 +178,7 @@ export class TaskQueue {
     avgDurationByRepo: { repo: string; avgMs: number; count: number }[];
     throughput: { lastHour: number; last24h: number };
     errorRate: number;
-    repoBreakdown: { repo: string; pending: number; running: number; completed: number; failed: number }[];
+    repoBreakdown: { repo: string; pending: number; running: number; completed: number; failed: number; waiting: number }[];
   } {
     const counts = this.stats();
 
@@ -212,12 +219,13 @@ export class TaskQueue {
           COUNT(*) FILTER (WHERE status = 'pending') as pending,
           COUNT(*) FILTER (WHERE status = 'running') as running,
           COUNT(*) FILTER (WHERE status = 'completed') as completed,
-          COUNT(*) FILTER (WHERE status = 'failed') as failed
+          COUNT(*) FILTER (WHERE status = 'failed') as failed,
+          COUNT(*) FILTER (WHERE status = 'waiting_user') as waiting
         FROM tasks
         GROUP BY repo
         ORDER BY (COUNT(*) FILTER (WHERE status = 'running') + COUNT(*) FILTER (WHERE status = 'pending')) DESC, repo ASC`
       )
-      .all() as { repo: string; pending: number; running: number; completed: number; failed: number }[];
+      .all() as { repo: string; pending: number; running: number; completed: number; failed: number; waiting: number }[];
 
     return {
       counts,

@@ -237,11 +237,18 @@ async function handleListTasks(msg: IncomingMessage, deps: HandlerDeps) {
   }
   const running = tasks.filter((t) => t.status === "running");
   const pending = tasks.filter((t) => t.status === "pending");
+  const waiting = tasks.filter((t) => t.status === "waiting_user");
   const lines: string[] = [];
   if (running.length > 0) {
     lines.push("Running:");
     for (const t of running) {
       lines.push(`  ${t.id.slice(0, 7)} — "${t.prompt.slice(0, 60)}" on ${t.repo} (${formatDuration(t.createdAt)})`);
+    }
+  }
+  if (waiting.length > 0) {
+    lines.push("Waiting for input:");
+    for (const t of waiting) {
+      lines.push(`  ${t.id.slice(0, 7)} — "${t.prompt.slice(0, 60)}" on ${t.repo} (awaiting reply)`);
     }
   }
   if (pending.length > 0) {

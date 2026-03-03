@@ -180,7 +180,7 @@ async function processTask(task: Task, deps: WorkerDeps) {
               statusLog.push(event.text.slice(0, 200));
               deps.trace.append(task.id, "status", event.text.slice(0, 200));
             } else if (event.kind === "ask_user") {
-              deps.queue.setWaiting(task.id, "waiting_user");
+              deps.queue.setWaiting(task.id);
               deps.sessionManager.setWaiting(task.id);
               deps.trace.append(task.id, "lifecycle", "Waiting for user input", event.question);
               const questionText = event.options.length > 0
@@ -313,7 +313,7 @@ async function processTask(task: Task, deps: WorkerDeps) {
             deps.queue.setSessionId(task.id, retryResult.sessionId);
           }
 
-          deps.queue.complete(task.id, retryResult.output);
+          deps.queue.updateResult(task.id, retryResult.output);
           await replyWithFallback(
             `[Scheduled: ${task.repo}] CI retry ${retry + 1}: ${retryResult.output.slice(0, 500)}`,
             originalMsg,

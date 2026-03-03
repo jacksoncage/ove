@@ -233,8 +233,12 @@ export class ClaudeRunner implements AgentRunner {
 
     return {
       sendMessage(text: string) {
-        const msg = JSON.stringify({ type: "user_message", content: text }) + "\n";
-        proc.stdin.write(encoder.encode(msg));
+        try {
+          const msg = JSON.stringify({ type: "user_message", content: text }) + "\n";
+          proc.stdin.write(encoder.encode(msg));
+        } catch (err) {
+          logger.warn("failed to write to streaming session stdin", { error: String(err) });
+        }
       },
       kill() {
         proc.kill();
