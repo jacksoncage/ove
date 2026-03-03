@@ -75,3 +75,93 @@ describe("summarizeToolInput", () => {
     expect(summarizeToolInput("Unknown", { foo: "bar" })).toBe('{"foo":"bar"}');
   });
 });
+
+describe("streaming args", () => {
+  const runner = new ClaudeRunner();
+
+  it("builds streaming args with input-format and without disallowed AskUserQuestion", () => {
+    const args = runner.buildStreamingArgs("fix the bug", { maxTurns: 25 });
+    expect(args).toContain("--input-format");
+    expect(args).toContain("stream-json");
+    expect(args).not.toContain("AskUserQuestion");
+    expect(args).not.toContain("--disallowed-tools");
+  });
+
+  it("streaming args still include output-format stream-json", () => {
+    const args = runner.buildStreamingArgs("test", { maxTurns: 10 });
+    expect(args).toContain("--output-format");
+    expect(args).toContain("stream-json");
+  });
+
+  it("includes resume flag when sessionId provided", () => {
+    const args = runner.buildStreamingArgs("test", { maxTurns: 10, resumeSessionId: "ses-123" });
+    expect(args).toContain("--resume");
+    expect(args).toContain("ses-123");
+  });
+
+  it("omits resume when no sessionId", () => {
+    const args = runner.buildStreamingArgs("test", { maxTurns: 10 });
+    expect(args).not.toContain("--resume");
+  });
+});
+
+describe("buildArgs resume support", () => {
+  const runner = new ClaudeRunner();
+
+  it("includes resume in regular buildArgs when provided", () => {
+    const args = runner.buildArgs("test", { maxTurns: 10, resumeSessionId: "ses-456" });
+    expect(args).toContain("--resume");
+    expect(args).toContain("ses-456");
+  });
+});
+
+describe("runStreaming", () => {
+  const runner = new ClaudeRunner();
+
+  it("method exists and is a function", () => {
+    expect(typeof runner.runStreaming).toBe("function");
+  });
+});
+
+describe("buildStreamingArgs details", () => {
+  const runner = new ClaudeRunner();
+
+  it("does not include --disallowed-tools at all", () => {
+    const args = runner.buildStreamingArgs("test", { maxTurns: 10 });
+    expect(args).not.toContain("--disallowed-tools");
+  });
+
+  it("includes --input-format stream-json", () => {
+    const args = runner.buildStreamingArgs("test", { maxTurns: 10 });
+    const idx = args.indexOf("--input-format");
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe("stream-json");
+  });
+
+  it("includes --dangerously-skip-permissions", () => {
+    const args = runner.buildStreamingArgs("test", { maxTurns: 10 });
+    expect(args).toContain("--dangerously-skip-permissions");
+  });
+
+  it("includes MCP config when provided", () => {
+    const args = runner.buildStreamingArgs("test", { maxTurns: 10, mcpConfigPath: "/tmp/mcp.json" });
+    expect(args).toContain("--mcp-config");
+    expect(args).toContain("/tmp/mcp.json");
+  });
+});
+
+describe("buildArgs with resume", () => {
+  const runner = new ClaudeRunner();
+
+  it("regular buildArgs still disallows AskUserQuestion", () => {
+    const args = runner.buildArgs("test", { maxTurns: 10 });
+    expect(args).toContain("--disallowed-tools");
+    expect(args).toContain("AskUserQuestion");
+  });
+
+  it("regular buildArgs does NOT include --input-format", () => {
+    const args = runner.buildArgs("test", { maxTurns: 10 });
+    expect(args).not.toContain("--input-format");
+  });
+});
+

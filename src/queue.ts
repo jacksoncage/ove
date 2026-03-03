@@ -13,10 +13,11 @@ export interface Task {
   userId: string;
   repo: string;
   prompt: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "waiting_user";
   result: string | null;
   taskType: string | null;
   priority: number;
+  sessionId: string | null;
   createdAt: string;
   completedAt: string | null;
 }
@@ -30,6 +31,7 @@ interface TaskRow {
   result: string | null;
   task_type: string | null;
   priority: number;
+  session_id: string | null;
   created_at: string;
   completed_at: string | null;
 }
@@ -62,6 +64,10 @@ export class TaskQueue {
     if (!columns.some(c => c.name === "priority")) {
       this.db.run("ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0");
     }
+    // Migration: add session_id column if missing (backward compat)
+    if (!columns.some(c => c.name === "session_id")) {
+      this.db.run("ALTER TABLE tasks ADD COLUMN session_id TEXT");
+    }
   }
 
   enqueue(input: TaskInput): string {
@@ -75,22 +81,21 @@ export class TaskQueue {
   }
 
   dequeue(): Task | null {
-    return this.db.transaction(() => {
-      const row = this.db
-        .query(
-          `SELECT * FROM tasks
-           WHERE status = 'pending'
-           ORDER BY priority DESC, created_at ASC, rowid ASC
-           LIMIT 1`
-        )
-        .get() as TaskRow;
+    const row = this.db
+      .query(
+        `SELECT * FROM tasks
+         WHERE status = 'pending'
+         AND repo NOT IN (SELECT repo FROM tasks WHERE status = 'waiting_user')
+         ORDER BY priority DESC, created_at ASC, rowid ASC
+         LIMIT 1`
+      )
+      .get() as TaskRow;
 
-      if (!row) return null;
+    if (!row) return null;
 
-      this.db.run(`UPDATE tasks SET status = 'running' WHERE id = ?`, [row.id]);
+    this.db.run(`UPDATE tasks SET status = 'running' WHERE id = ?`, [row.id]);
 
-      return this.rowToTask({ ...row, status: "running" });
-    })();
+    return this.rowToTask({ ...row, status: "running" });
   }
 
   complete(id: string, result: string) {
@@ -108,8 +113,40 @@ export class TaskQueue {
     );
   }
 
+  updateResult(id: string, result: string) {
+    this.db.run(
+      `UPDATE tasks SET result = ?, completed_at = ? WHERE id = ?`,
+      [result, new Date().toISOString(), id]
+    );
+  }
+
   get(id: string): Task | null {
     const row = this.db.query(`SELECT * FROM tasks WHERE id = ?`).get(id) as TaskRow;
+    return row ? this.rowToTask(row) : null;
+  }
+
+  setWaiting(id: string) {
+    this.db.run(
+      `UPDATE tasks SET status = 'waiting_user' WHERE id = ? AND status = 'running'`,
+      [id]
+    );
+  }
+
+  resume(id: string) {
+    this.db.run(
+      `UPDATE tasks SET status = 'running' WHERE id = ? AND status = 'waiting_user'`,
+      [id]
+    );
+  }
+
+  setSessionId(id: string, sessionId: string) {
+    this.db.run(`UPDATE tasks SET session_id = ? WHERE id = ?`, [sessionId, id]);
+  }
+
+  getWaitingForUser(userId: string): Task | null {
+    const row = this.db
+      .query(`SELECT * FROM tasks WHERE user_id = ? AND status = 'waiting_user' ORDER BY created_at DESC LIMIT 1`)
+      .get(userId) as TaskRow;
     return row ? this.rowToTask(row) : null;
   }
 
@@ -122,25 +159,26 @@ export class TaskQueue {
     return rows.map((r) => this.rowToTask(r));
   }
 
-  stats(): { pending: number; running: number; completed: number; failed: number } {
+  stats(): { pending: number; running: number; completed: number; failed: number; waiting: number } {
     return this.db
       .query(
         `SELECT
           COUNT(*) FILTER (WHERE status = 'pending') as pending,
           COUNT(*) FILTER (WHERE status = 'running') as running,
           COUNT(*) FILTER (WHERE status = 'completed') as completed,
-          COUNT(*) FILTER (WHERE status = 'failed') as failed
+          COUNT(*) FILTER (WHERE status = 'failed') as failed,
+          COUNT(*) FILTER (WHERE status = 'waiting_user') as waiting
         FROM tasks`
       )
-      .get() as { pending: number; running: number; completed: number; failed: number };
+      .get() as { pending: number; running: number; completed: number; failed: number; waiting: number };
   }
 
   metrics(): {
-    counts: { pending: number; running: number; completed: number; failed: number };
+    counts: { pending: number; running: number; completed: number; failed: number; waiting: number };
     avgDurationByRepo: { repo: string; avgMs: number; count: number }[];
     throughput: { lastHour: number; last24h: number };
     errorRate: number;
-    repoBreakdown: { repo: string; pending: number; running: number; completed: number; failed: number }[];
+    repoBreakdown: { repo: string; pending: number; running: number; completed: number; failed: number; waiting: number }[];
   } {
     const counts = this.stats();
 
@@ -181,12 +219,13 @@ export class TaskQueue {
           COUNT(*) FILTER (WHERE status = 'pending') as pending,
           COUNT(*) FILTER (WHERE status = 'running') as running,
           COUNT(*) FILTER (WHERE status = 'completed') as completed,
-          COUNT(*) FILTER (WHERE status = 'failed') as failed
+          COUNT(*) FILTER (WHERE status = 'failed') as failed,
+          COUNT(*) FILTER (WHERE status = 'waiting_user') as waiting
         FROM tasks
         GROUP BY repo
         ORDER BY (COUNT(*) FILTER (WHERE status = 'running') + COUNT(*) FILTER (WHERE status = 'pending')) DESC, repo ASC`
       )
-      .all() as { repo: string; pending: number; running: number; completed: number; failed: number }[];
+      .all() as { repo: string; pending: number; running: number; completed: number; failed: number; waiting: number }[];
 
     return {
       counts,
@@ -207,7 +246,7 @@ export class TaskQueue {
   listActive(limit: number = 20): Task[] {
     const rows = this.db
       .query(
-        `SELECT * FROM tasks WHERE status IN ('running', 'pending') ORDER BY priority DESC, created_at ASC, rowid ASC LIMIT ?`
+        `SELECT * FROM tasks WHERE status IN ('running', 'pending', 'waiting_user') ORDER BY priority DESC, created_at ASC, rowid ASC LIMIT ?`
       )
       .all(limit) as TaskRow[];
     return rows.map((r) => this.rowToTask(r));
@@ -215,7 +254,7 @@ export class TaskQueue {
 
   cancel(id: string): boolean {
     return this.db.run(
-      `UPDATE tasks SET status = 'failed', result = 'Cancelled', completed_at = ? WHERE id = ? AND status IN ('running', 'pending')`,
+      `UPDATE tasks SET status = 'failed', result = 'Cancelled', completed_at = ? WHERE id = ? AND status IN ('running', 'pending', 'waiting_user')`,
       [new Date().toISOString(), id]
     ).changes > 0;
   }
@@ -235,7 +274,7 @@ export class TaskQueue {
 
   resetStale(): number {
     return this.db.run(
-      `UPDATE tasks SET status = 'failed', result = 'Interrupted — process restarted', completed_at = ? WHERE status = 'running'`,
+      `UPDATE tasks SET status = 'failed', result = 'Interrupted — process restarted', completed_at = ? WHERE status IN ('running', 'waiting_user')`,
       [new Date().toISOString()]
     ).changes;
   }
@@ -246,10 +285,11 @@ export class TaskQueue {
       userId: row.user_id,
       repo: row.repo,
       prompt: row.prompt,
-      status: row.status as "pending" | "running" | "completed" | "failed",
+      status: row.status as "pending" | "running" | "completed" | "failed" | "waiting_user",
       result: row.result,
       taskType: row.task_type || null,
       priority: row.priority ?? 0,
+      sessionId: row.session_id || null,
       createdAt: row.created_at,
       completedAt: row.completed_at,
     };

@@ -203,7 +203,7 @@ describe("TaskQueue", () => {
   describe("metrics()", () => {
     it("returns zeroes on empty queue", () => {
       const m = queue.metrics();
-      expect(m.counts).toEqual({ pending: 0, running: 0, completed: 0, failed: 0 });
+      expect(m.counts).toEqual({ pending: 0, running: 0, completed: 0, failed: 0, waiting: 0 });
       expect(m.avgDurationByRepo).toEqual([]);
       expect(m.throughput.lastHour).toBe(0);
       expect(m.throughput.last24h).toBe(0);
@@ -283,6 +283,96 @@ describe("TaskQueue", () => {
       queue.enqueue({ userId: "u1", repo: "x", prompt: "p" });
       const m = queue.metrics();
       expect(m.errorRate).toBe(0);
+    });
+  });
+
+  describe("waiting_user status", () => {
+    it("setWaiting transitions running task to waiting_user", () => {
+      const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+      queue.dequeue(); // running
+      queue.setWaiting(id);
+      const task = queue.get(id);
+      expect(task?.status).toBe("waiting_user");
+    });
+
+    it("resume transitions waiting_user back to running", () => {
+      const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+      queue.dequeue();
+      queue.setWaiting(id);
+      queue.resume(id);
+      const task = queue.get(id);
+      expect(task?.status).toBe("running");
+    });
+
+    it("dequeue skips waiting_user tasks", () => {
+      const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+      queue.dequeue();
+      queue.setWaiting(id);
+      queue.enqueue({ userId: "u1", repo: "r1", prompt: "test2" });
+      const next = queue.dequeue();
+      expect(next).toBeNull();
+    });
+
+    it("resetStale also resets waiting_user tasks", () => {
+      const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+      queue.dequeue();
+      queue.setWaiting(id);
+      const count = queue.resetStale();
+      expect(count).toBe(1);
+      expect(queue.get(id)?.status).toBe("failed");
+    });
+
+    it("listActive includes waiting_user tasks", () => {
+      const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+      queue.dequeue();
+      queue.setWaiting(id);
+      const active = queue.listActive();
+      expect(active.some(t => t.id === id)).toBe(true);
+    });
+
+    it("getWaitingForUser returns waiting_user task for a user", () => {
+      const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+      queue.dequeue();
+      queue.setWaiting(id);
+      const waiting = queue.getWaitingForUser("u1");
+      expect(waiting?.id).toBe(id);
+    });
+
+    it("getWaitingForUser returns null when no waiting tasks", () => {
+      const waiting = queue.getWaitingForUser("u1");
+      expect(waiting).toBeNull();
+    });
+  });
+
+  it("cancel works on waiting_user tasks", () => {
+    const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+    queue.dequeue();
+    queue.setWaiting(id);
+    const cancelled = queue.cancel(id);
+    expect(cancelled).toBe(true);
+    expect(queue.get(id)?.status).toBe("failed");
+  });
+
+  it("stats counts waiting_user tasks", () => {
+    const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+    queue.dequeue();
+    queue.setWaiting(id);
+    const stats = queue.stats();
+    expect(stats.waiting).toBe(1);
+  });
+
+  describe("sessionId tracking", () => {
+    it("stores sessionId via setSessionId", () => {
+      const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+      queue.setSessionId(id, "ses-abc-123");
+      const task = queue.get(id);
+      expect(task?.sessionId).toBe("ses-abc-123");
+    });
+
+    it("sessionId is null by default", () => {
+      const id = queue.enqueue({ userId: "u1", repo: "r1", prompt: "test" });
+      const task = queue.get(id);
+      expect(task?.sessionId).toBeNull();
     });
   });
 });
