@@ -146,7 +146,6 @@ ${historyContext}${lastRepoHint}User message: "${rawText}"
 
 Available repos: ${repoNames.join(", ")}`;
 
-  onStatus?.("Figuring out which repo...");
   try {
     const resolved = await resolveViaCLI(resolvePrompt, deps);
 
