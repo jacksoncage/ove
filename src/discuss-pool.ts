@@ -4,6 +4,8 @@ const IDLE_TIMEOUT = 3 * 60 * 60_000; // 3 hours idle → kill session
 const STALL_TIMEOUT = 180_000; // 3 min no pane changes → assume stuck
 const ACTIVE_TIMEOUT = 30 * 60_000; // 30 min max while Claude is still working
 const POLL_INTERVAL = 500; // poll every 500ms
+const MIN_RESPONSE_WAIT = 5_000; // don't check for completion in the first 5s
+const STABLE_THRESHOLD = 10; // 10 consecutive stable polls (5s) before declaring done
 const POST_PROMPT_DELAY = 2000; // wait after prompt detected before sending keys
 
 interface TmuxSession {
@@ -142,8 +144,8 @@ export class DiscussPool {
       const pane = await this.capturePane(session.sessionName);
       if (pane === lastPane && pane !== beforePane) {
         stableCount++;
-        // Require 2 consecutive stable polls (1 second) to avoid false positives
-        if (stableCount >= 2 && this.hasPromptReady(pane)) {
+        // Require STABLE_THRESHOLD consecutive stable polls (5s) and MIN_RESPONSE_WAIT elapsed
+        if (stableCount >= STABLE_THRESHOLD && elapsed >= MIN_RESPONSE_WAIT && this.hasPromptReady(pane)) {
           const response = this.extractResponse(pane, prompt);
           if (response) {
             logger.info("discuss response received", {
