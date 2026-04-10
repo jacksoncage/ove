@@ -6,6 +6,8 @@ export interface TaskInput {
   prompt: string;
   taskType?: string;
   priority?: number;
+  resumeSessionId?: string;
+  worktreePath?: string;
 }
 
 export interface Task {
@@ -18,6 +20,7 @@ export interface Task {
   taskType: string | null;
   priority: number;
   sessionId: string | null;
+  worktreePath: string | null;
   createdAt: string;
   completedAt: string | null;
 }
@@ -32,6 +35,7 @@ interface TaskRow {
   task_type: string | null;
   priority: number;
   session_id: string | null;
+  worktree_path: string | null;
   created_at: string;
   completed_at: string | null;
 }
@@ -68,14 +72,18 @@ export class TaskQueue {
     if (!columns.some(c => c.name === "session_id")) {
       this.db.run("ALTER TABLE tasks ADD COLUMN session_id TEXT");
     }
+    // Migration: add worktree_path column if missing (backward compat)
+    if (!columns.some(c => c.name === "worktree_path")) {
+      this.db.run("ALTER TABLE tasks ADD COLUMN worktree_path TEXT");
+    }
   }
 
   enqueue(input: TaskInput): string {
     const id = crypto.randomUUID();
     this.db.run(
-      `INSERT INTO tasks (id, user_id, repo, prompt, status, task_type, priority, created_at)
-       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`,
-      [id, input.userId, input.repo, input.prompt, input.taskType || null, input.priority ?? 0, new Date().toISOString()]
+      `INSERT INTO tasks (id, user_id, repo, prompt, status, task_type, priority, session_id, worktree_path, created_at)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+      [id, input.userId, input.repo, input.prompt, input.taskType || null, input.priority ?? 0, input.resumeSessionId || null, input.worktreePath || null, new Date().toISOString()]
     );
     return id;
   }
@@ -141,6 +149,10 @@ export class TaskQueue {
 
   setSessionId(id: string, sessionId: string) {
     this.db.run(`UPDATE tasks SET session_id = ? WHERE id = ?`, [sessionId, id]);
+  }
+
+  setWorktreePath(id: string, path: string) {
+    this.db.run(`UPDATE tasks SET worktree_path = ? WHERE id = ?`, [path, id]);
   }
 
   getWaitingForUser(userId: string): Task | null {
@@ -290,6 +302,7 @@ export class TaskQueue {
       taskType: row.task_type || null,
       priority: row.priority ?? 0,
       sessionId: row.session_id || null,
+      worktreePath: row.worktree_path || null,
       createdAt: row.created_at,
       completedAt: row.completed_at,
     };

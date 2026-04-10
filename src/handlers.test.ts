@@ -494,70 +494,84 @@ describe("multi-user mode isolation", () => {
 });
 
 describe("reply routing to waiting sessions", () => {
-  it("routes reply to waiting session instead of creating new task", async () => {
-    const sentMessages: string[] = [];
-    const clearedTaskIds: string[] = [];
+  it("kills waiting session and enqueues resume task with same worktree", async () => {
+    let killed = false;
+    const deps = makeDeps();
+
+    // Create a task with sessionId and worktreePath in waiting_user state
+    const id = deps.queue.enqueue({ userId: "slack:U123", repo: "my-app", prompt: "original" });
+    deps.queue.dequeue(); // running
+    deps.queue.setSessionId(id, "ses-123");
+    deps.queue.setWorktreePath(id, "/tmp/worktree-test");
+    deps.queue.setWaiting(id);
+
     const mockSessionManager = {
       getWaitingForUser: (userId: string) => userId === "slack:U123"
-        ? { taskId: "task-waiting", session: { sendMessage: (t: string) => sentMessages.push(t) } }
+        ? { taskId: id, session: { sendMessage: () => {}, kill: () => { killed = true; }, sessionId: "ses-123" } }
         : null,
-      clearWaiting: (taskId: string) => { clearedTaskIds.push(taskId); },
+      clearWaiting: () => {},
+      unregister: () => {},
     };
-
-    const deps = makeDeps({
-      sessionManager: mockSessionManager as any,
-    });
+    (deps as any).sessionManager = mockSessionManager;
 
     const handler = createMessageHandler(deps);
     const msg = makeMessage("yes, fix them all");
     await handler(msg);
 
-    // Should have sent to session, not created a new task
-    expect(sentMessages).toEqual(["yes, fix them all"]);
-    expect(clearedTaskIds).toEqual(["task-waiting"]);
+    // Original session should be killed
+    expect(killed).toBe(true);
+
+    // Original task should be cancelled
+    expect(deps.queue.get(id)?.status).toBe("failed");
+
+    // A new resume task should be enqueued with the worktree path and session ID
+    const tasks = deps.queue.listByUser("slack:U123", 5);
+    const resumeTask = tasks.find(t => t.status === "pending");
+    expect(resumeTask).toBeDefined();
+    expect(resumeTask!.prompt).toBe("yes, fix them all");
+    expect(resumeTask!.sessionId).toBe("ses-123");
+    expect(resumeTask!.worktreePath).toBe("/tmp/worktree-test");
   });
 
-  it("resumes the queue task when routing reply to waiting session", async () => {
+  it("replies with error when no session ID available", async () => {
+    const deps = makeDeps();
+    const id = deps.queue.enqueue({ userId: "slack:U123", repo: "my-app", prompt: "original" });
+    deps.queue.dequeue();
+    deps.queue.setWaiting(id);
+    // No sessionId or worktreePath set
+
     const mockSessionManager = {
       getWaitingForUser: (userId: string) => userId === "slack:U123"
-        ? { taskId: "task-waiting", session: { sendMessage: () => {} } }
+        ? { taskId: id, session: { sendMessage: () => {}, kill: () => {}, sessionId: null } }
         : null,
       clearWaiting: () => {},
+      unregister: () => {},
     };
-
-    const deps = makeDeps({
-      sessionManager: mockSessionManager as any,
-    });
-
-    // Create a task in waiting_user state
-    const id = deps.queue.enqueue({ userId: "slack:U123", repo: "my-app", prompt: "original" });
-    deps.queue.dequeue(); // running
-
-    // Override the mock to return the real task ID
-    (mockSessionManager as any).getWaitingForUser = (userId: string) => userId === "slack:U123"
-      ? { taskId: id, session: { sendMessage: () => {} } }
-      : null;
-
-    deps.queue.setWaiting(id);
-    expect(deps.queue.get(id)?.status).toBe("waiting_user");
+    (deps as any).sessionManager = mockSessionManager;
 
     const handler = createMessageHandler(deps);
-    const msg = makeMessage("yes do it");
+    const replies: string[] = [];
+    const msg = makeMessage("my reply");
+    msg.reply = async (text: string) => { replies.push(text); };
     await handler(msg);
 
-    // Queue task should be resumed (back to running)
-    expect(deps.queue.get(id)?.status).toBe("running");
+    expect(replies[0]).toContain("try again from scratch");
   });
 
   it("adds user message to session history even when routing to waiting session", async () => {
-    const mockSessionManager = {
-      getWaitingForUser: () => ({ taskId: "t1", session: { sendMessage: () => {} } }),
-      clearWaiting: () => {},
-    };
+    const deps = makeDeps();
+    const id = deps.queue.enqueue({ userId: "slack:U123", repo: "my-app", prompt: "original" });
+    deps.queue.dequeue();
+    deps.queue.setSessionId(id, "ses-123");
+    deps.queue.setWorktreePath(id, "/tmp/wt");
+    deps.queue.setWaiting(id);
 
-    const deps = makeDeps({
-      sessionManager: mockSessionManager as any,
-    });
+    const mockSessionManager = {
+      getWaitingForUser: () => ({ taskId: id, session: { sendMessage: () => {}, kill: () => {}, sessionId: "ses-123" } }),
+      clearWaiting: () => {},
+      unregister: () => {},
+    };
+    (deps as any).sessionManager = mockSessionManager;
 
     const handler = createMessageHandler(deps);
     const msg = makeMessage("my reply");

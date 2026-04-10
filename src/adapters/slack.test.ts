@@ -26,6 +26,7 @@ mock.module("@slack/bolt", () => ({
     event(name: string, handler: Function) {
       if (name === "app_mention") appMentionHandler = handler;
     }
+    error(_handler: Function) {}
     start() {
       mockStart();
       return Promise.resolve();

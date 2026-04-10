@@ -12,6 +12,19 @@ import type { AgentRunner, RunOptions, RunResult, StatusEvent, StreamEvent } fro
 import type { TraceStore } from "./trace";
 import type { SessionManager } from "./session-manager";
 import type { DebouncedFunction } from "./adapters/debounce";
+import { DiscussPool } from "./discuss-pool";
+
+// Track last discuss session per user for conversation continuity
+const discussSessions = new Map<string, string>();
+const discussPool = new DiscussPool();
+
+export function clearDiscussSession(userId: string) {
+  discussSessions.delete(userId);
+}
+
+export function getDiscussPool(): DiscussPool {
+  return discussPool;
+}
 
 export interface WorkerDeps {
   config: Config;
@@ -125,8 +138,14 @@ async function processTask(task: Task, deps: WorkerDeps) {
     await originalMsg?.updateStatus(`Working on it...`);
 
     let workDir: string;
+    let reusingWorktree = false;
 
-    if (isDiscuss) {
+    if (task.worktreePath) {
+      // Resume task — reuse existing worktree
+      workDir = task.worktreePath;
+      reusingWorktree = true;
+      logger.info("reusing worktree for resume", { taskId: task.id, workDir });
+    } else if (isDiscuss) {
       workDir = deps.config.reposDir;
     } else if (isCreateProject) {
       workDir = join(deps.config.reposDir, task.repo);
@@ -140,6 +159,7 @@ async function processTask(task: Task, deps: WorkerDeps) {
         task.id,
         repoInfo!.defaultBranch
       );
+      deps.queue.setWorktreePath(task.id, workDir);
     }
 
     try {
@@ -159,13 +179,29 @@ async function processTask(task: Task, deps: WorkerDeps) {
         maxTurns,
         mcpConfigPath,
         signal: abortController.signal,
+        resumeSessionId: task.sessionId ?? undefined,
       });
 
       const useStreaming = !isDiscuss && task.taskType !== "cron" && typeof (taskRunner as any).runStreaming === "function";
+      const hasExistingDiscuss = isDiscuss && discussPool.hasSession(task.userId);
+      logger.info("task execution mode", { taskId: task.id, useStreaming, isDiscuss, taskType: task.taskType || "code", hasExistingDiscuss });
 
       let result: RunResult;
 
-      if (useStreaming) {
+      if (isDiscuss) {
+        // Discuss uses persistent tmux-based session — fast follow-ups
+        const poolResult = await discussPool.send(
+          task.userId,
+          task.prompt,
+          workDir,
+        );
+        result = {
+          success: true,
+          output: poolResult.output,
+          durationMs: poolResult.durationMs,
+        };
+      } else if (useStreaming) {
+        logger.info("starting streaming session", { taskId: task.id, repo: task.repo });
         const session = (taskRunner as any).runStreaming(
           task.prompt,
           workDir,
@@ -180,6 +216,7 @@ async function processTask(task: Task, deps: WorkerDeps) {
               statusLog.push(event.text.slice(0, 200));
               deps.trace.append(task.id, "status", event.text.slice(0, 200));
             } else if (event.kind === "ask_user") {
+              logger.info("streaming ask_user received", { taskId: task.id, question: event.question.slice(0, 200) });
               deps.queue.setWaiting(task.id);
               deps.sessionManager.setWaiting(task.id);
               deps.trace.append(task.id, "lifecycle", "Waiting for user input", event.question);
@@ -196,6 +233,7 @@ async function processTask(task: Task, deps: WorkerDeps) {
 
         deps.sessionManager.register(task.id, task.userId, session);
         result = await session.done;
+        logger.info("streaming session completed", { taskId: task.id, success: result.success, sessionId: result.sessionId ?? null });
         deps.sessionManager.unregister(task.id);
       } else {
         result = await taskRunner.run(
@@ -230,6 +268,12 @@ async function processTask(task: Task, deps: WorkerDeps) {
 
       const elapsed = Date.now() - startTime;
       const outcome = result.success ? "completed" : "failed";
+
+      // Store discuss session ID for conversation continuity
+      if (isDiscuss && result.sessionId) {
+        discussSessions.set(task.userId, result.sessionId);
+        logger.info("discuss session stored", { userId: task.userId, sessionId: result.sessionId });
+      }
 
       if (result.success) {
         deps.queue.complete(task.id, result.output);
@@ -329,10 +373,21 @@ async function processTask(task: Task, deps: WorkerDeps) {
         }
       }
     } finally {
-      if (!skipRepoSetup) {
-        await deps.repos.removeWorktree(task.repo, task.id).catch((err) => {
-          logger.warn("worktree cleanup failed", { repo: task.repo, taskId: task.id, error: String(err) });
-        });
+      // Don't clean up worktree if task is waiting for user input — it'll be reused on resume
+      const currentStatus = deps.queue.get(task.id)?.status;
+      const shouldCleanup = !skipRepoSetup && currentStatus !== "waiting_user";
+      if (shouldCleanup) {
+        if (reusingWorktree) {
+          // Resume task: clean up by removing the worktree directory directly
+          const { rm } = await import("node:fs/promises");
+          await rm(workDir, { recursive: true, force: true }).catch((err) => {
+            logger.warn("resume worktree cleanup failed", { workDir, error: String(err) });
+          });
+        } else {
+          await deps.repos.removeWorktree(task.repo, task.id).catch((err) => {
+            logger.warn("worktree cleanup failed", { repo: task.repo, taskId: task.id, error: String(err) });
+          });
+        }
       }
     }
   } catch (err) {

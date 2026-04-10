@@ -12,6 +12,7 @@ import type { IncomingMessage, EventAdapter, IncomingEvent } from "./adapters/ty
 import type { AgentRunner } from "./runner";
 import type { TraceStore } from "./trace";
 import type { SessionManager } from "./session-manager";
+import { clearDiscussSession } from "./worker";
 
 export interface HandlerDeps {
   config: Config;
@@ -104,6 +105,12 @@ type RepoResolution =
   | { kind: "unknown"; repoNames: string[] }
   | { kind: "error"; message: string };
 
+async function resolveViaCLI(prompt: string, deps: HandlerDeps): Promise<string> {
+  const runner = deps.getRunner(deps.config.runner?.name);
+  const result = await runner.run(prompt, deps.config.reposDir, { maxTurns: 1 });
+  return result.output.trim().replace(/[`"']/g, "");
+}
+
 async function resolveRepoWithLLM(
   userId: string,
   rawText: string,
@@ -126,13 +133,22 @@ async function resolveRepoWithLLM(
   const lastRepoHint = lastRepo && repoNames.includes(lastRepo)
     ? `The user's most recent task was on repo "${lastRepo}", but only use this if the conversation context supports it.\n\n`
     : "";
-  const resolvePrompt = `You are a repo-name resolver. ${historyContext}${lastRepoHint}The user's latest message:\n"${rawText}"\n\nAvailable repos: ${repoNames.join(", ")}\n\nRespond with ONLY the repo name that best matches their request. Consider the conversation context if the current message doesn't mention a specific repo. Nothing else — just the exact repo name from the list. If the question doesn't need a specific repo (e.g. "list my open PRs", "what should I work on today", cross-repo queries, general questions about the user's GitHub activity), respond with "NONE". If you cannot determine which specific repo, respond with "UNKNOWN".`;
+  const resolvePrompt = `You are a repo-name resolver for a coding assistant. Given a user message, determine which repository they want to work on.
+
+RULES:
+- Respond with ONLY a repo name or NONE or UNKNOWN — nothing else
+- Respond NONE for: casual chat, greetings, follow-up questions about previous conversation, general questions ("what should I work on", "how are you"), cross-repo queries, anything that isn't clearly about a specific repo's code/issues/PRs
+- Respond UNKNOWN if the message seems repo-related but you can't determine which one
+- Only respond with a repo name if the message explicitly mentions or clearly refers to a specific repo's code, issues, PRs, or features
+- Do NOT match a repo just because a word in the message happens to match a repo name (e.g. "what did I just ask you" is NONE, not a repo called "ask")
+
+${historyContext}${lastRepoHint}User message: "${rawText}"
+
+Available repos: ${repoNames.join(", ")}`;
 
   onStatus?.("Figuring out which repo...");
   try {
-    const runner = deps.getRunner(deps.config.runner?.name);
-    const result = await runner.run(resolvePrompt, deps.config.reposDir, { maxTurns: 1 });
-    const resolved = result.output.trim().replace(/[`"']/g, "");
+    const resolved = await resolveViaCLI(resolvePrompt, deps);
 
     if (resolved === "NONE") {
       logger.info("repo resolver returned NONE — falling back to discuss", { userText: rawText.slice(0, 80) });
@@ -151,6 +167,7 @@ async function resolveRepoWithLLM(
 
 async function handleClear(msg: IncomingMessage, deps: HandlerDeps) {
   deps.sessions.clear(msg.userId);
+  clearDiscussSession(msg.userId);
   await msg.reply("Conversation cleared.");
 }
 
@@ -436,7 +453,21 @@ async function handleInitRepo(msg: IncomingMessage, args: Record<string, any>, d
   await replyAndLog(msg, deps, `Added repo "${name}" (${url}, branch: ${branch}).`);
 }
 
+function looksLikeChatMessage(text: string): boolean {
+  const lower = text.toLowerCase().trim();
+  if (lower.length < 40 && !/\b(fix|review|deploy|build|test|lint|run|check|update|refactor|add|create|delete|remove|merge|push|pull|branch|commit|release|ship)\b/i.test(lower)) {
+    return true;
+  }
+  return false;
+}
+
 async function handleTaskMessage(msg: IncomingMessage, parsed: ParsedMessage, deps: HandlerDeps) {
+  // Skip expensive LLM repo resolution for obvious chat messages
+  if (!parsed.repo && looksLikeChatMessage(parsed.rawText)) {
+    const history = deps.sessions.getHistory(msg.userId, 6);
+    return handleDiscuss(msg, { ...parsed, type: "free-form" }, history, deps);
+  }
+
   const hint = parsed.repo && deps.getRepoInfo(parsed.repo) ? parsed.repo : undefined;
   const resolution = await resolveRepoWithLLM(msg.userId, parsed.rawText, hint, deps, (text) => msg.updateStatus(text));
 
@@ -491,14 +522,37 @@ export function createMessageHandler(deps: HandlerDeps): (msg: IncomingMessage) 
   return async (msg: IncomingMessage) => {
     deps.sessions.addMessage(msg.userId, "user", msg.text);
 
-    // Route reply to waiting streaming session if one exists
+    // Route reply to waiting session: kill process, enqueue resume in same worktree
     if (deps.sessionManager) {
       const waiting = deps.sessionManager.getWaitingForUser(msg.userId);
       if (waiting) {
-        waiting.session.sendMessage(msg.text);
-        deps.sessionManager.clearWaiting(waiting.taskId);
-        deps.queue.resume(waiting.taskId);
-        deps.trace.append(waiting.taskId, "lifecycle", "User reply received", msg.text.slice(0, 200));
+        const waitingTask = deps.queue.get(waiting.taskId);
+        const sessionId = waitingTask?.sessionId ?? waiting.session.sessionId;
+        const worktreePath = waitingTask?.worktreePath;
+        logger.info("resuming waiting session with user reply", { taskId: waiting.taskId, userId: msg.userId, sessionId, worktreePath });
+
+        // Kill the blocked -p process
+        waiting.session.kill();
+        deps.sessionManager.unregister(waiting.taskId);
+        deps.queue.cancel(waiting.taskId);
+        deps.trace.append(waiting.taskId, "lifecycle", "User reply received, spawning resume", msg.text.slice(0, 200));
+
+        if (sessionId && worktreePath) {
+          // Enqueue resume task — reuses same worktree + Claude session
+          const resumeTaskId = deps.queue.enqueue({
+            userId: msg.userId,
+            repo: waitingTask!.repo,
+            prompt: msg.text,
+            priority: waitingTask?.priority ?? 0,
+            resumeSessionId: sessionId,
+            worktreePath,
+          });
+          deps.pendingReplies.set(resumeTaskId, msg);
+          logger.info("resume task enqueued", { resumeTaskId, sessionId, worktreePath });
+        } else {
+          logger.warn("missing session ID or worktree for resume", { taskId: waiting.taskId, sessionId, worktreePath });
+          await msg.reply("Lost the session context — try again from scratch.");
+        }
         return;
       }
     }

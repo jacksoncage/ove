@@ -79,15 +79,17 @@ describe("summarizeToolInput", () => {
 describe("streaming args", () => {
   const runner = new ClaudeRunner();
 
-  it("builds streaming args with input-format and without disallowed AskUserQuestion", () => {
+  it("builds streaming args with -p prompt and output-format stream-json", () => {
     const args = runner.buildStreamingArgs("fix the bug", { maxTurns: 25 });
-    expect(args).toContain("--input-format");
+    expect(args).toContain("-p");
+    expect(args).toContain("fix the bug");
+    expect(args).toContain("--output-format");
     expect(args).toContain("stream-json");
-    expect(args).not.toContain("AskUserQuestion");
+    expect(args).not.toContain("--input-format");
     expect(args).not.toContain("--disallowed-tools");
   });
 
-  it("streaming args still include output-format stream-json", () => {
+  it("streaming args include output-format stream-json", () => {
     const args = runner.buildStreamingArgs("test", { maxTurns: 10 });
     expect(args).toContain("--output-format");
     expect(args).toContain("stream-json");
@@ -131,11 +133,9 @@ describe("buildStreamingArgs details", () => {
     expect(args).not.toContain("--disallowed-tools");
   });
 
-  it("includes --input-format stream-json", () => {
+  it("does not include --input-format", () => {
     const args = runner.buildStreamingArgs("test", { maxTurns: 10 });
-    const idx = args.indexOf("--input-format");
-    expect(idx).toBeGreaterThan(-1);
-    expect(args[idx + 1]).toBe("stream-json");
+    expect(args).not.toContain("--input-format");
   });
 
   it("includes --dangerously-skip-permissions", () => {

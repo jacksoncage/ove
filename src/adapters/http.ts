@@ -323,6 +323,7 @@ export class HttpApiAdapter implements EventAdapter {
             prompt: t.prompt,
             status: t.status,
             priority: t.priority,
+            sessionId: t.sessionId || null,
             result: t.result && t.result.length > 300 ? t.result.slice(0, 300) + "..." : t.result,
             createdAt: t.createdAt,
             completedAt: t.completedAt,
@@ -340,11 +341,11 @@ export class HttpApiAdapter implements EventAdapter {
           if (!task) {
             return Response.json({ error: "Task not found" }, { status: 404 });
           }
-          if (task.status !== "running" && task.status !== "pending") {
+          if (task.status !== "running" && task.status !== "pending" && task.status !== "waiting_user") {
             return Response.json({ error: "Task is not cancellable", status: task.status }, { status: 409 });
           }
 
-          if (task.status === "running") {
+          if (task.status === "running" || task.status === "waiting_user") {
             self.runningProcesses?.get(taskId)?.abort.abort();
           }
 

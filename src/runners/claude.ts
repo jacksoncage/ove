@@ -25,7 +25,7 @@ export function summarizeToolInput(name: string, input: any): string {
 
 export class ClaudeRunner implements AgentRunner {
   name = "claude-code";
-  private claudePath: string;
+  readonly claudePath: string;
 
   constructor() {
     const found = which("claude");
@@ -42,7 +42,6 @@ export class ClaudeRunner implements AgentRunner {
   buildStreamingArgs(prompt: string, opts: RunOptions): string[] {
     const args = [
       "-p", prompt,
-      "--input-format", "stream-json",
       "--output-format", "stream-json",
       "--verbose",
       "--max-turns", String(opts.maxTurns),
@@ -58,7 +57,9 @@ export class ClaudeRunner implements AgentRunner {
     const startTime = Date.now();
     logger.info("starting claude task", { workDir, maxTurns: opts.maxTurns, claudePath: this.claudePath });
 
-    const proc = Bun.spawn([this.claudePath, ...args], {
+    // Use setsid to isolate the child in its own process group,
+    // preventing spurious SIGTERM/SIGINT from killing it.
+    const proc = Bun.spawn(["setsid", this.claudePath, ...args], {
       cwd: workDir,
       stdout: "pipe",
       stderr: "pipe",
@@ -138,9 +139,10 @@ export class ClaudeRunner implements AgentRunner {
     const startTime = Date.now();
     logger.info("starting streaming claude task", { workDir, maxTurns: opts.maxTurns });
 
-    const proc = Bun.spawn([this.claudePath, ...args], {
+    // Use setsid to isolate the child in its own process group,
+    // preventing spurious SIGTERM/SIGINT from killing it.
+    const proc = Bun.spawn(["setsid", this.claudePath, ...args], {
       cwd: workDir,
-      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
       env: { ...process.env, CI: "1" },
@@ -157,13 +159,16 @@ export class ClaudeRunner implements AgentRunner {
     const done = (async (): Promise<RunResult> => {
       const decoder = new TextDecoder();
       const reader = proc.stdout.getReader();
+      let buffer = "";
       try {
         while (true) {
           const { done: isDone, value } = await reader.read();
           if (isDone) break;
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n").filter(Boolean);
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
           for (const line of lines) {
+            if (!line.trim()) continue;
             try {
               const msg = JSON.parse(line);
 
@@ -218,7 +223,10 @@ export class ClaudeRunner implements AgentRunner {
       }
       if (exitCode !== 0) {
         const stderr = await new Response(proc.stderr).text();
-        return { success: false, output: stderr || "Claude task failed", durationMs };
+        logger.error("streaming claude task failed", { exitCode, stderr: stderr.slice(0, 500), durationMs, hadResult: !!resultText, textBlockCount: textBlocks.length });
+        // If we got text output before the process died, return that instead of a generic error
+        const output = resultText || (textBlocks.length > 0 ? textBlocks.join("\n\n") : stderr || `Claude task failed (exit code ${exitCode})`);
+        return { success: false, output, durationMs, sessionId: sessionId ?? undefined };
       }
 
       return {
@@ -229,16 +237,9 @@ export class ClaudeRunner implements AgentRunner {
       };
     })();
 
-    const encoder = new TextEncoder();
-
     return {
-      sendMessage(text: string) {
-        try {
-          const msg = JSON.stringify({ type: "user_message", content: text }) + "\n";
-          proc.stdin.write(encoder.encode(msg));
-        } catch (err) {
-          logger.warn("failed to write to streaming session stdin", { error: String(err) });
-        }
+      sendMessage(_text: string) {
+        // Not supported in -p mode. Handler uses --resume with new process instead.
       },
       kill() {
         proc.kill();

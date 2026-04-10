@@ -221,9 +221,10 @@
     }
 
     .badge-pending   { background: var(--amber-dim); color: var(--amber); }
-    .badge-running   { background: var(--cyan-dim); color: var(--cyan); animation: pulse 2s infinite; }
-    .badge-completed { background: var(--green-dim); color: var(--green); }
-    .badge-failed    { background: var(--red-dim); color: var(--red); }
+    .badge-running      { background: var(--cyan-dim); color: var(--cyan); animation: pulse 2s infinite; }
+    .badge-waiting_user { background: var(--amber-dim); color: var(--amber); animation: pulse 2s infinite; }
+    .badge-completed    { background: var(--green-dim); color: var(--green); }
+    .badge-failed       { background: var(--red-dim); color: var(--red); }
 
     .badge-priority-2 { background: var(--red-dim); color: var(--red); }
     .badge-priority-1 { background: var(--amber-dim); color: var(--amber); }
@@ -623,6 +624,7 @@
         <option value="">all statuses</option>
         <option value="running">running</option>
         <option value="pending">pending</option>
+        <option value="waiting_user">waiting for user</option>
         <option value="completed">completed</option>
         <option value="failed">failed</option>
       </select>
@@ -862,6 +864,9 @@
         ["priority", priorityLabel],
         ["created", fmtTimeFull(task.createdAt)],
       ];
+      if (task.sessionId) {
+        items.push(["session", task.sessionId.slice(0, 12) + "..."]);
+      }
       if (task.completedAt) {
         items.push(["done", fmtTimeFull(task.completedAt)]);
         var ms = new Date(task.completedAt).getTime() - new Date(task.createdAt).getTime();
@@ -897,7 +902,7 @@
       }
 
       // Cancel button for running/pending tasks
-      if (task.status === "running" || task.status === "pending") {
+      if (task.status === "running" || task.status === "pending" || task.status === "waiting_user") {
         var cancelRow = el("div", "task-context-row");
         cancelRow.style.marginTop = "0.5rem";
         var cancelBtn = el("button", "cancel-btn", "Cancel task");
@@ -1031,9 +1036,9 @@
           if (selectedTaskId) {
             var task = allTasks.find(function (t) { return t.id === selectedTaskId; });
             if (task) {
-              var wasActive = lastSelectedStatus === "running" || lastSelectedStatus === "pending";
+              var wasActive = lastSelectedStatus === "running" || lastSelectedStatus === "pending" || lastSelectedStatus === "waiting_user";
               var justFinished = wasActive && (task.status === "completed" || task.status === "failed");
-              var stillActive = task.status === "running" || task.status === "pending";
+              var stillActive = task.status === "running" || task.status === "pending" || task.status === "waiting_user";
               if (stillActive || justFinished) {
                 await selectTask(selectedTaskId);
               }

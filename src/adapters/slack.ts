@@ -16,6 +16,19 @@ export class SlackAdapter implements ChatAdapter {
       appToken: process.env.SLACK_APP_TOKEN,
       socketMode: true,
     });
+
+    // Increase ping timeout from default 5s to 30s.
+    // The 5s default trips during heavy streaming work and triggers reconnects
+    // that correlate with spurious SIGTERM signals (likely a Bun/ws interaction).
+    const receiver = (this.app as any).receiver;
+    if (receiver?.client) {
+      receiver.client.clientPingTimeoutMS = 30_000;
+      logger.info("slack ping timeout increased to 30s");
+    }
+
+    this.app.error(async (error) => {
+      logger.warn("slack app error (non-fatal)", { error: String(error) });
+    });
   }
 
   private buildMessage(

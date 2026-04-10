@@ -21,7 +21,7 @@ import { TraceStore } from "./trace";
 import { startCronLoop } from "./cron";
 import { ScheduleStore } from "./schedules";
 import { createMessageHandler, createEventHandler } from "./handlers";
-import { createWorker } from "./worker";
+import { createWorker, getDiscussPool } from "./worker";
 import { SessionManager } from "./session-manager";
 
 const config = loadConfig();
@@ -240,8 +240,11 @@ async function main() {
 
   logger.info("ove ready");
 
-  async function shutdown() {
-    logger.info("shutting down...");
+  let shuttingDown = false;
+  async function shutdown(signal: string) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info("shutting down...", { signal });
     for (const adapter of adapters) {
       await adapter.stop();
     }
@@ -249,12 +252,43 @@ async function main() {
       await ea.stop();
     }
     sessionManager.killAll();
+    getDiscussPool().killAll();
     process.exit(0);
   }
 
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  // Guard against spurious signals while tasks are running.
+  // Slack bolt's WebSocket pong timeout triggers SIGTERM (likely a Bun/ws interaction bug).
+  // Only allow shutdown when no tasks are active, or after a second signal (force).
+  let forceShutdownRequested = false;
+  function handleSignal(signal: string) {
+    if (runningProcesses.size > 0 && !forceShutdownRequested) {
+      forceShutdownRequested = true;
+      logger.info(`ignoring ${signal} — ${runningProcesses.size} active task(s). Send again to force.`);
+      // Reset force flag after 10s so a stray signal later doesn't force-kill
+      setTimeout(() => { forceShutdownRequested = false; }, 10_000);
+      return;
+    }
+    shutdown(signal);
+  }
+  process.on("SIGINT", () => handleSignal("SIGINT"));
+  process.on("SIGTERM", () => handleSignal("SIGTERM"));
 }
+
+process.on("unhandledRejection", (err) => {
+  logger.error("unhandled rejection (non-fatal)", { error: String(err), stack: (err as any)?.stack?.slice(0, 500) });
+});
+
+process.on("uncaughtException", (err) => {
+  logger.error("uncaught exception (non-fatal)", { error: String(err), stack: err?.stack?.slice(0, 500) });
+});
+
+process.on("beforeExit", (code) => {
+  logger.info("beforeExit event", { code });
+});
+
+process.on("exit", (code) => {
+  logger.info("exit event", { code });
+});
 
 main().catch((err) => {
   logger.error("fatal error", { error: String(err) });
