@@ -12,7 +12,6 @@ import type { IncomingMessage, EventAdapter, IncomingEvent } from "./adapters/ty
 import type { AgentRunner } from "./runner";
 import type { TraceStore } from "./trace";
 import type { SessionManager } from "./session-manager";
-import { clearDiscussSession } from "./worker";
 
 export interface HandlerDeps {
   config: Config;
@@ -166,7 +165,6 @@ Available repos: ${repoNames.join(", ")}`;
 
 async function handleClear(msg: IncomingMessage, deps: HandlerDeps) {
   deps.sessions.clear(msg.userId);
-  clearDiscussSession(msg.userId);
   await msg.reply("Conversation cleared.");
 }
 

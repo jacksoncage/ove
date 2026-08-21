@@ -12,19 +12,6 @@ import type { AgentRunner, RunOptions, RunResult, StatusEvent, StreamEvent } fro
 import type { TraceStore } from "./trace";
 import type { SessionManager } from "./session-manager";
 import type { DebouncedFunction } from "./adapters/debounce";
-import { DiscussPool } from "./discuss-pool";
-
-// Track last discuss session per user for conversation continuity
-const discussSessions = new Map<string, string>();
-const discussPool = new DiscussPool();
-
-export function clearDiscussSession(userId: string) {
-  discussSessions.delete(userId);
-}
-
-export function getDiscussPool(): DiscussPool {
-  return discussPool;
-}
 
 export interface WorkerDeps {
   config: Config;
@@ -170,6 +157,9 @@ async function processTask(task: Task, deps: WorkerDeps) {
       }
 
       const taskRunner = deps.getRunnerForRepo(task.repo);
+      const discussSessionId = isDiscuss
+        ? deps.sessions.getAgentSession(task.userId, taskRunner.name)
+        : null;
       const maxTurns = task.taskType === "cron"
         ? Math.max(deps.config.claude.maxTurns, 100)
         : isDiscuss
@@ -179,27 +169,33 @@ async function processTask(task: Task, deps: WorkerDeps) {
         maxTurns,
         mcpConfigPath,
         signal: abortController.signal,
-        resumeSessionId: task.sessionId ?? undefined,
+        resumeSessionId: task.sessionId ?? discussSessionId ?? undefined,
       });
 
       const useStreaming = !isDiscuss && task.taskType !== "cron" && typeof (taskRunner as any).runStreaming === "function";
-      const hasExistingDiscuss = isDiscuss && discussPool.hasSession(task.userId);
+      const hasExistingDiscuss = isDiscuss && discussSessionId !== null;
       logger.info("task execution mode", { taskId: task.id, useStreaming, isDiscuss, taskType: task.taskType || "code", hasExistingDiscuss });
 
       let result: RunResult;
 
       if (isDiscuss) {
-        // Discuss uses persistent tmux-based session — fast follow-ups
-        const poolResult = await discussPool.send(
-          task.userId,
+        // Discuss uses the configured runner's persisted non-interactive
+        // session. This avoids brittle TUI/tmux parsing and supports both
+        // Claude and Codex through the same AgentRunner contract.
+        result = await taskRunner.run(
           task.prompt,
           workDir,
+          runOpts,
+          (event: StatusEvent) => {
+            if (event.kind === "tool") {
+              const summary = `Using ${event.tool}...`;
+              if (statusLog.at(-1) !== summary) statusLog.push(summary);
+            } else {
+              statusLog.push(event.text.slice(0, 200));
+            }
+            originalMsg?.updateStatus(statusLog.slice(-5).join("\n"));
+          },
         );
-        result = {
-          success: true,
-          output: poolResult.output,
-          durationMs: poolResult.durationMs,
-        };
       } else if (useStreaming) {
         logger.info("starting streaming session", { taskId: task.id, repo: task.repo });
         const session = (taskRunner as any).runStreaming(
@@ -271,7 +267,7 @@ async function processTask(task: Task, deps: WorkerDeps) {
 
       // Store discuss session ID for conversation continuity
       if (isDiscuss && result.sessionId) {
-        discussSessions.set(task.userId, result.sessionId);
+        deps.sessions.setAgentSession(task.userId, taskRunner.name, result.sessionId);
         logger.info("discuss session stored", { userId: task.userId, sessionId: result.sessionId });
       }
 

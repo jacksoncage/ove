@@ -370,9 +370,14 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
     }
 
     // Collect repos — GitHub sync or manual
-    const repos: Record<string, { url: string; defaultBranch: string }> = existingConfig.repos
-      ? { ...existingConfig.repos }
-      : {};
+    const repos: Record<string, { url: string; defaultBranch: string }> = Object.fromEntries(
+      Object.entries(existingConfig.repos || {})
+        .filter((entry): entry is [string, typeof entry[1] & { url: string }] => Boolean(entry[1].url))
+        .map(([name, repo]) => [name, {
+          url: repo.url,
+          defaultBranch: repo.defaultBranch || "main",
+        }]),
+    );
     let githubOrgs: string[] = existingConfig.github?.orgs || [];
     let useWildcard = false;
 

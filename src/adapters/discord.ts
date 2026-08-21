@@ -32,6 +32,8 @@ export class DiscordAdapter implements ChatAdapter {
       const isDM = !discordMsg.guild;
       const isMention = discordMsg.mentions.has(this.client.user!);
       if (!isDM && !isMention) return;
+      const channel = discordMsg.channel;
+      if (!channel.isSendable()) return;
 
       let text = discordMsg.content;
       if (isMention) {
@@ -47,11 +49,11 @@ export class DiscordAdapter implements ChatAdapter {
           if (statusMsg) {
             await statusMsg.edit(statusText);
           } else {
-            statusMsg = await discordMsg.channel.send(statusText);
+            statusMsg = await channel.send(statusText);
           }
         } catch (err) {
           logger.warn("discord status update failed", { error: String(err) });
-          statusMsg = await discordMsg.channel.send(statusText);
+          statusMsg = await channel.send(statusText);
         }
       }, 3000);
 
@@ -60,7 +62,7 @@ export class DiscordAdapter implements ChatAdapter {
         platform: "discord",
         text,
         reply: async (replyText: string) => {
-          await discordMsg.channel.send(replyText);
+          await channel.send(replyText);
         },
         updateStatus: doUpdate,
       };

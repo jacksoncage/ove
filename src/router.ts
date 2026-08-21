@@ -24,7 +24,7 @@ export interface ParsedMessage {
   repo?: string;
   args: Record<string, any>;
   rawText: string;
-  priority: number;
+  priority?: number;
 }
 
 const PRIORITY_LEVELS: Record<string, number> = { urgent: 2, high: 1, normal: 0, low: 0 };

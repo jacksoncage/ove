@@ -41,16 +41,18 @@ export class CodexRunner implements AgentRunner {
   }
 
   buildArgs(prompt: string, workDir: string, opts: RunOptions): string[] {
-    const args = [
-      "exec",
+    const args = opts.resumeSessionId
+      ? ["exec", "resume"]
+      : ["exec"];
+    args.push(
       "--json",
       "--dangerously-bypass-approvals-and-sandbox",
       "--skip-git-repo-check",
-      "--ephemeral",
-      "-C",
-      workDir,
-    ];
+    );
     if (opts.model) args.push("-m", opts.model);
+    // Bun starts both initial and resumed sessions in workDir. Avoid also
+    // passing a relative -C path, which would resolve as workDir/workDir.
+    if (opts.resumeSessionId) args.push(opts.resumeSessionId);
     args.push(prompt);
     return args;
   }
@@ -81,6 +83,7 @@ export class CodexRunner implements AgentRunner {
 
     let lastAgentMessage: string | null = null;
     let errorMessage: string | null = null;
+    let sessionId: string | null = null;
     const decoder = new TextDecoder();
     const reader = proc.stdout.getReader();
 
@@ -96,12 +99,16 @@ export class CodexRunner implements AgentRunner {
           if (!line.trim()) continue;
           try {
             const event = JSON.parse(line);
+            if (event.type === "thread.started" && event.thread_id) {
+              sessionId = event.thread_id;
+            }
             if (
               event.type === "item.completed" &&
               event.item?.type === "agent_message"
             ) {
-              lastAgentMessage = event.item.text || "";
-              if (onStatus) onStatus({ kind: "text", text: lastAgentMessage });
+              const message = String(event.item.text || "");
+              lastAgentMessage = message;
+              if (onStatus) onStatus({ kind: "text", text: message });
             }
             if (event.type === "item.started" && event.item) {
               const summary = summarizeCodexItem(event.item);
@@ -124,19 +131,19 @@ export class CodexRunner implements AgentRunner {
 
     if (exitCode === "timeout") {
       logger.error("codex task timed out", { durationMs });
-      return { success: false, output: `Codex task timed out after ${TIMEOUT_MS / 60000} minutes`, durationMs };
+      return { success: false, output: `Codex task timed out after ${TIMEOUT_MS / 60000} minutes`, durationMs, sessionId: sessionId ?? undefined };
     }
 
     if (exitCode !== 0) {
       const stderr = await new Response(proc.stderr).text();
       const output = errorMessage || stderr || "Codex task failed";
       logger.error("codex task failed", { exitCode, output, durationMs });
-      return { success: false, output, durationMs };
+      return { success: false, output, durationMs, sessionId: sessionId ?? undefined };
     }
 
     const finalOutput =
       lastAgentMessage || "Task completed (no output)";
     logger.info("codex task completed", { durationMs });
-    return { success: true, output: finalOutput, durationMs };
+    return { success: true, output: finalOutput, durationMs, sessionId: sessionId ?? undefined };
   }
 }

@@ -21,7 +21,7 @@ import { TraceStore } from "./trace";
 import { startCronLoop } from "./cron";
 import { ScheduleStore } from "./schedules";
 import { createMessageHandler, createEventHandler } from "./handlers";
-import { createWorker, getDiscussPool } from "./worker";
+import { createWorker } from "./worker";
 import { SessionManager } from "./session-manager";
 
 const config = loadConfig();
@@ -252,7 +252,6 @@ async function main() {
       await ea.stop();
     }
     sessionManager.killAll();
-    getDiscussPool().killAll();
     process.exit(0);
   }
 

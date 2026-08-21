@@ -83,4 +83,25 @@ describe("SessionStore", () => {
       expect(store.getMode("slack:U999")).toBe("strict");
     });
   });
+
+  describe("agent sessions", () => {
+    it("persists a runner session for conversation continuity", () => {
+      store.setAgentSession("telegram:1", "codex", "thread-123");
+      expect(store.getAgentSession("telegram:1", "codex")).toBe("thread-123");
+      expect(store.getAgentSession("telegram:1", "claude-code")).toBeNull();
+    });
+
+    it("replaces the session when the runner changes", () => {
+      store.setAgentSession("telegram:1", "claude-code", "claude-1");
+      store.setAgentSession("telegram:1", "codex", "codex-1");
+      expect(store.getAgentSession("telegram:1", "claude-code")).toBeNull();
+      expect(store.getAgentSession("telegram:1", "codex")).toBe("codex-1");
+    });
+
+    it("clear removes the persisted agent session", () => {
+      store.setAgentSession("telegram:1", "codex", "thread-123");
+      store.clear("telegram:1");
+      expect(store.getAgentSession("telegram:1", "codex")).toBeNull();
+    });
+  });
 });

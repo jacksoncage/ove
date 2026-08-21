@@ -149,7 +149,7 @@ describe("runDiagnostics", () => {
     const reposDir = join(dir, "repos");
     mkdirSync(reposDir);
     const deps = makeDeps({
-      existsSync: (p: string) => p === reposDir,
+      existsSync: (p) => p === reposDir,
       accessSync: () => {},
     });
     const config = makeConfig({ reposDir });

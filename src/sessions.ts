@@ -36,6 +36,14 @@ export class SessionStore {
         updated_at TEXT NOT NULL
       )
     `);
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS agent_sessions (
+        user_id TEXT PRIMARY KEY,
+        runner TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
   }
 
   addMessage(userId: string, role: "user" | "assistant", content: string) {
@@ -79,8 +87,24 @@ export class SessionStore {
     );
   }
 
+  getAgentSession(userId: string, runner: string): string | null {
+    const row = this.db
+      .query(`SELECT session_id FROM agent_sessions WHERE user_id = ? AND runner = ?`)
+      .get(userId, runner) as { session_id: string } | null;
+    return row?.session_id ?? null;
+  }
+
+  setAgentSession(userId: string, runner: string, sessionId: string): void {
+    this.db.run(
+      `INSERT INTO agent_sessions (user_id, runner, session_id, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET runner = excluded.runner, session_id = excluded.session_id, updated_at = excluded.updated_at`,
+      [userId, runner, sessionId, new Date().toISOString()]
+    );
+  }
+
   clear(userId: string) {
     this.db.run(`DELETE FROM chat_history WHERE user_id = ?`, [userId]);
     this.db.run(`DELETE FROM user_modes WHERE user_id = ?`, [userId]);
+    this.db.run(`DELETE FROM agent_sessions WHERE user_id = ?`, [userId]);
   }
 }
