@@ -255,39 +255,46 @@ curl http://localhost:3000/api/tasks?key=<key>&limit=20&status=completed
 curl http://localhost:3000/api/trace/<task-id>?key=<key>
 ```
 
-## Skills
+## Private owner profiles, memory, and skills
 
-Ove spawns Claude Code CLI (`claude -p`) in isolated worktrees. The spawned instances automatically pick up [skills](https://code.claude.com/docs/en/skills) — reusable instruction sets that follow the [Agent Skills](https://agentskills.io) open standard.
+Each authorized Ove user can be mapped to a private profile stored outside the repository. Profiles contain owner facts and progressively disclosed skills without committing private information to Git.
 
-Skills are configured **manually** on the host machine running Ove:
-
-| Level | Path | Scope |
-|-------|------|-------|
-| Personal | `~/.claude/skills/<name>/SKILL.md` | All repos on this machine |
-| Per-repo | `.claude/skills/<name>/SKILL.md` (committed to repo) | That repo only |
-| Plugins | Installed via `claude plugins add` | Where enabled |
-
-When Ove runs a task in a worktree, Claude Code picks up personal skills from `~/.claude/skills/`, project skills from the repo's `.claude/skills/`, and any enabled plugins. This means you can give the Claude instances domain-specific knowledge, coding conventions, deployment workflows, or review checklists — just by dropping a `SKILL.md` in the right place.
-
-Example: adding a review skill to a repo so Ove knows your team's review standards:
-
+```text
+~/.config/ove/profiles/love/
+├── OWNER.md
+├── FAMILY.md
+├── HOME.md
+├── INFRASTRUCTURE.md
+├── PREFERENCES.md
+├── MEMORY.md
+└── skills/
+    └── unifi-home/
+        └── SKILL.md
 ```
-my-repo/.claude/skills/review/SKILL.md
-```
+
+Configure the mapping with `profilesDir`, `profiles`, and each authorized user's `profile` field. Ove creates `OWNER.md`, `MEMORY.md`, and the skills directory on first use with private filesystem permissions.
+
+- `remember that <fact>` / `kom ihåg att <fact>` saves a durable private memory.
+- `forget <text>` removes matching bullet memories.
+- `profile` shows filenames, skill names, and automatic-learning status without dumping private contents.
+- `skills` lists private skills available to that user.
+- `/clear` clears chat/agent session state but deliberately keeps durable owner memory.
+
+When `autoLearn` is enabled, the runner may propose concise durable facts at the end of a successful task. Ove extracts and stores those facts before logging or replying, and strips the internal directive from output. Filename, path, and size boundaries are enforced in code.
+
+Private skills use the standard `SKILL.md` shape:
 
 ```yaml
 ---
-name: review
-description: Review code using our team standards
+name: unifi-home
+description: Inspect and troubleshoot the owner's UniFi home network.
 ---
 
-When reviewing code, check for:
-1. Error handling covers all failure modes
-2. Tests cover the happy path and at least one edge case
-3. No secrets or credentials in code
+Use the owner's documented controller and device naming conventions.
+Never reveal household presence or device details to another user.
 ```
 
-See the [Claude Code skills docs](https://code.claude.com/docs/en/skills) for the full reference on frontmatter options, argument passing, subagent execution, and more.
+Keep credentials in `.env`, systemd credentials, or a secrets manager—not in profile Markdown. Keep the profile directory outside the Ove checkout and restrict it to the service user (`0700` directories, `0600` files).
 
 ## Testing
 

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, accessSync, constants } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { userInfo } from "node:os";
 import { createInterface } from "node:readline/promises";
 import type { Config } from "./config";
@@ -414,9 +414,14 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
     }
 
     // Collect users
-    const users: Record<string, { name: string; repos: string[] }> = existingConfig.users
+    const users: Record<string, { name: string; repos: string[]; profile?: string }> = existingConfig.users
       ? { ...existingConfig.users }
       : {};
+    const configuredUserIds: string[] = [];
+    const configureUser = (id: string, name: string) => {
+      users[id] = { name, repos: repoNames };
+      configuredUserIds.push(id);
+    };
     const repoNames = useWildcard ? ["*"] : Object.keys(repos);
 
     if (needsUsers || needsConfigFile) {
@@ -430,29 +435,43 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
 
       if (has("Slack")) {
         const userId = await ask(rl, "Your Slack user ID (U...)");
-        if (userId) users[`slack:${userId}`] = { name: userName || "user", repos: repoNames };
+        if (userId) configureUser(`slack:${userId}`, userName || "user");
       }
       if (has("Telegram")) {
         const userId = await ask(rl, "Your Telegram user ID (send /start to @userinfobot to find it)");
-        if (userId) users[`telegram:${userId}`] = { name: userName || "user", repos: repoNames };
+        if (userId) configureUser(`telegram:${userId}`, userName || "user");
       }
       if (has("Discord")) {
         const userId = await ask(rl, "Your Discord user ID");
-        if (userId) users[`discord:${userId}`] = { name: userName || "user", repos: repoNames };
+        if (userId) configureUser(`discord:${userId}`, userName || "user");
       }
       if (has("WhatsApp")) {
         const phone = await ask(rl, "Your phone number (with country code)");
-        if (phone) users[`whatsapp:${phone}`] = { name: userName || "user", repos: repoNames };
+        if (phone) configureUser(`whatsapp:${phone}`, userName || "user");
       }
       if (has("HTTP API")) {
-        users["http:anon"] = { name: "http", repos: repoNames };
+        configureUser("http:anon", "http");
       }
       if (has("GitHub")) {
         const ghUser = await ask(rl, "Your GitHub username");
-        if (ghUser) users[`github:${ghUser}`] = { name: userName || ghUser, repos: repoNames };
+        if (ghUser) configureUser(`github:${ghUser}`, userName || ghUser);
       }
       if (has("CLI")) {
-        users["cli:local"] = { name: userName || "local", repos: repoNames };
+        configureUser("cli:local", userName || "local");
+      }
+    }
+
+    let profilesDir = existingConfig.profilesDir;
+    let profiles = existingConfig.profiles;
+    if (!fixing && configuredUserIds.length > 0) {
+      const enableProfile = await ask(rl, "Enable a private owner profile and skills? (y/n)");
+      if (enableProfile.toLowerCase() === "y") {
+        const defaultProfile = (users[configuredUserIds[0]]?.name || "owner")
+          .toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || "owner";
+        const profileId = (await ask(rl, `Private profile ID [${defaultProfile}]`)) || defaultProfile;
+        profilesDir = (await ask(rl, "Private profiles directory [~/.config/ove/profiles]")) || join(userInfo().homedir, ".config/ove/profiles");
+        profiles = { ...(profiles || {}), [profileId]: { autoLearn: true } };
+        for (const userId of configuredUserIds) users[userId].profile = profileId;
       }
     }
 
@@ -495,6 +514,8 @@ export async function runSetup(opts?: { fixOnly?: string[] }): Promise<void> {
         ...(github && { github }),
         ...(existingConfig.mcpServers && { mcpServers: existingConfig.mcpServers }),
         ...(existingConfig.cron && { cron: existingConfig.cron }),
+        ...(profilesDir && { profilesDir }),
+        ...(profiles && { profiles }),
       };
       writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
       process.stdout.write("  Wrote config.json\n");

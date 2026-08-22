@@ -17,7 +17,12 @@ export type MessageType =
   | "list-tasks"
   | "cancel-task"
   | "trace"
-  | "set-mode";
+  | "set-mode"
+  | "remember"
+  | "forget"
+  | "profile"
+  | "skills"
+  | "reload-profile";
 
 export interface ParsedMessage {
   type: MessageType;
@@ -68,6 +73,13 @@ const SIMPLE_COMMANDS: Record<string, MessageType> = {
   reset: "clear",
   tasks: "list-tasks",
   "/tasks": "list-tasks",
+  profile: "profile",
+  "/profile": "profile",
+  memory: "profile",
+  "/memory": "profile",
+  skills: "skills",
+  "/skills": "skills",
+  "/reload-profile": "reload-profile",
 };
 
 function initRepoFromSlug(slug: string, rawText: string): Omit<ParsedMessage, "priority"> {
@@ -89,6 +101,12 @@ export function parseMessage(text: string): ParsedMessage {
 
   const simpleType = SIMPLE_COMMANDS[lower];
   if (simpleType) return msg({ type: simpleType, args: {}, rawText: trimmed });
+
+  const rememberMatch = trimmed.match(/^(?:\/remember\s+|remember(?:\s+that)?\s+|kom\s+ihåg(?:\s+att)?\s+|lägg\s+till(?:\s+detta)?(?:\s+om\s+mig)?\s+)(.+)$/i);
+  if (rememberMatch) return msg({ type: "remember", args: { fact: rememberMatch[1].trim() }, rawText: trimmed });
+
+  const forgetMatch = trimmed.match(/^(?:\/forget|forget|glöm)(?:\s+att)?\s+(.+)$/i);
+  if (forgetMatch) return msg({ type: "forget", args: { query: forgetMatch[1].trim() }, rawText: trimmed });
 
   const cancelMatch = trimmed.match(/^(?:\/)?cancel\s+(\S+)$/i);
   if (cancelMatch) return msg({ type: "cancel-task", args: { taskId: cancelMatch[1] }, rawText: trimmed });

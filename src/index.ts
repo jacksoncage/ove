@@ -23,6 +23,7 @@ import { ScheduleStore } from "./schedules";
 import { createMessageHandler, createEventHandler } from "./handlers";
 import { createWorker } from "./worker";
 import { SessionManager } from "./session-manager";
+import { ProfileStore } from "./profile-store";
 
 const config = loadConfig();
 const db = new Database(process.env.DB_PATH || "./ove.db");
@@ -34,6 +35,7 @@ const trace = new TraceStore(db);
 const schedules = new ScheduleStore(db);
 const repoRegistry = new RepoRegistry(db);
 const sessionManager = new SessionManager();
+const profiles = new ProfileStore(config);
 
 repoRegistry.migrateFromConfig(
   Object.fromEntries(
@@ -169,6 +171,7 @@ async function main() {
     getRunnerForRepo,
     getRepoInfo,
     sessionManager,
+    profiles,
   };
 
   const handleMessage = createMessageHandler(handlerDeps);
@@ -223,6 +226,7 @@ async function main() {
     getRepoInfo,
     trace,
     sessionManager,
+    profiles,
   });
   worker.start();
 

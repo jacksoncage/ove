@@ -9,6 +9,10 @@ import { TraceStore } from "./trace";
 import type { IncomingMessage, IncomingEvent, EventAdapter } from "./adapters/types";
 import type { AgentRunner } from "./runner";
 import type { Config } from "./config";
+import { ProfileStore } from "./profile-store";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 
 // --- Helpers ---
@@ -48,13 +52,15 @@ function makeDeps(overrides?: Partial<HandlerDeps>): HandlerDeps {
     }),
   };
 
+  const config = makeConfig();
   return {
-    config: makeConfig(),
+    config,
     queue,
     sessions,
     schedules,
     repoRegistry,
     trace,
+    profiles: new ProfileStore(config),
     pendingReplies: new Map(),
     pendingEventReplies: new Map(),
     runningProcesses: new Map(),
@@ -81,6 +87,26 @@ function makeMessage(text: string, userId = "slack:U123", platform = "slack"): I
     updateStatus: async (t: string) => { statuses.push(t); },
   };
 }
+
+describe("private profile commands", () => {
+  it("routes a durable home memory into the user's private HOME.md", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ove-handler-profile-"));
+    try {
+      const config = makeConfig({
+        profilesDir: root,
+        profiles: { owner: { autoLearn: true } },
+        users: { "slack:U123": { name: "Owner", repos: ["my-app"], profile: "owner" } },
+      });
+      const deps = makeDeps({ config, profiles: new ProfileStore(config) });
+      const msg = makeMessage("remember that my UniFi router is named gateway");
+      await createMessageHandler(deps)(msg);
+      expect(msg.replies[0]).toContain("HOME.md");
+      expect(readFileSync(join(root, "owner", "HOME.md"), "utf8")).toContain("gateway");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 // --- Tests ---
 

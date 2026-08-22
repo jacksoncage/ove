@@ -12,6 +12,7 @@ import type { IncomingMessage, EventAdapter, IncomingEvent } from "./adapters/ty
 import type { AgentRunner } from "./runner";
 import type { TraceStore } from "./trace";
 import type { SessionManager } from "./session-manager";
+import type { ProfileStore } from "./profile-store";
 
 export interface HandlerDeps {
   config: Config;
@@ -21,6 +22,7 @@ export interface HandlerDeps {
   repoRegistry: RepoRegistry;
   trace: TraceStore;
   sessionManager?: SessionManager;
+  profiles: ProfileStore;
   pendingReplies: Map<string, IncomingMessage>;
   pendingEventReplies: Map<string, { adapter: EventAdapter; event: IncomingEvent }>;
   runningProcesses: Map<string, { abort: AbortController; task: Task }>;
@@ -168,6 +170,52 @@ async function handleClear(msg: IncomingMessage, deps: HandlerDeps) {
   await msg.reply("Conversation cleared.");
 }
 
+async function handleRemember(msg: IncomingMessage, fact: string, deps: HandlerDeps) {
+  const lower = fact.toLowerCase();
+  const file = /\b(familj|family|wife|husband|partner|child|children|barn|son|daughter|dotter)\b/.test(lower)
+    ? "FAMILY.md"
+    : /\b(home|hem|house|hus|unifi|router|wifi|network|nätverk|homey|automation|device)\b/.test(lower)
+    ? "HOME.md"
+    : /\b(server|service|host|machine|vm|docker|kubernetes|repo|repository|infra|setup|deploy)\b/.test(lower)
+    ? "INFRASTRUCTURE.md"
+    : /\b(prefer|preference|föredrar|gillar|vill alltid|never want|aldrig)\b/.test(lower)
+    ? "PREFERENCES.md"
+    : "OWNER.md";
+  const result = deps.profiles.remember(msg.userId, fact, file);
+  const reply = result.saved
+    ? `Remembered. Private profile updated (${file}).`
+    : result.reason || "Couldn't save that memory.";
+  await replyAndLog(msg, deps, reply);
+}
+
+async function handleForget(msg: IncomingMessage, query: string, deps: HandlerDeps) {
+  const removed = deps.profiles.forget(msg.userId, query);
+  await replyAndLog(msg, deps, removed > 0
+    ? `Forgot ${removed} matching ${removed === 1 ? "memory" : "memories"}.`
+    : "No matching private memory found.");
+}
+
+async function handleProfile(msg: IncomingMessage, deps: HandlerDeps) {
+  const summary = deps.profiles.summary(msg.userId);
+  if (!summary) {
+    await replyAndLog(msg, deps, "No private profile is configured for your user.");
+    return;
+  }
+  await replyAndLog(msg, deps, [
+    `Private profile: ${summary.profile}`,
+    `Context files: ${summary.files.join(", ") || "none"}`,
+    `Skills: ${summary.skills.join(", ") || "none"}`,
+    `Automatic durable learning: ${summary.autoLearn ? "on" : "off"}`,
+  ].join("\n"));
+}
+
+async function handleSkills(msg: IncomingMessage, deps: HandlerDeps) {
+  const summary = deps.profiles.summary(msg.userId);
+  await replyAndLog(msg, deps, summary
+    ? `Private skills: ${summary.skills.join(", ") || "none configured"}.`
+    : "No private profile is configured for your user.");
+}
+
 async function handleSetMode(msg: IncomingMessage, args: Record<string, any>, deps: HandlerDeps) {
   const mode = args.mode;
   if (mode !== "assistant" && mode !== "strict") {
@@ -233,6 +281,9 @@ async function handleHelp(msg: IncomingMessage, deps: HandlerDeps) {
     "• trace [task-id] — see what happened step by step",
     "• mode assistant — I'll (reluctantly) help with anything",
     "• mode strict — back to code-only (default)",
+    "• remember that <fact> — save a private owner memory",
+    "• forget <text> — remove matching private memories",
+    "• profile / skills — inspect private context without revealing its contents",
     "• status / history / clear",
     "• <task> every day/weekday at <time> [on <repo>] — schedule a recurring task",
     "• list schedules — see your scheduled tasks",
@@ -564,6 +615,11 @@ export function createMessageHandler(deps: HandlerDeps): (msg: IncomingMessage) 
       "list-tasks": () => handleListTasks(msg, deps),
       "cancel-task": () => handleCancelTask(msg, parsed.args, deps),
       "set-mode": () => handleSetMode(msg, parsed.args, deps),
+      "remember": () => handleRemember(msg, parsed.args.fact, deps),
+      "forget": () => handleForget(msg, parsed.args.query, deps),
+      "profile": () => handleProfile(msg, deps),
+      "skills": () => handleSkills(msg, deps),
+      "reload-profile": () => handleProfile(msg, deps),
       "trace": () => handleTrace(msg, parsed.args, deps),
       "list-schedules": () => handleListSchedules(msg, deps),
       "remove-schedule": () => handleRemoveSchedule(msg, parsed.args, deps),

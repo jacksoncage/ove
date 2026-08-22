@@ -20,6 +20,12 @@ export interface RepoConfig {
 export interface UserConfig {
   name: string;
   repos: string[];
+  profile?: string;
+}
+
+export interface ProfileConfig {
+  contextFiles?: string[];
+  autoLearn?: boolean;
 }
 
 export interface McpServerConfig {
@@ -52,6 +58,8 @@ export interface Config {
   cron?: CronTaskConfig[];
   runner?: RunnerConfig;
   github?: GitHubConfig;
+  profilesDir?: string;
+  profiles?: Record<string, ProfileConfig>;
 }
 
 export function loadConfig(): Config {
@@ -73,6 +81,8 @@ export function loadConfig(): Config {
     cron: raw.cron,
     runner: raw.runner,
     github: raw.github,
+    profilesDir: process.env.OVE_PROFILES_DIR || raw.profilesDir,
+    profiles: raw.profiles,
   };
 }
 
@@ -114,6 +124,8 @@ export function saveConfig(config: Config): void {
     ...(config.cron && { cron: config.cron }),
     ...(config.runner && { runner: config.runner }),
     ...(config.github && { github: config.github }),
+    ...(config.profilesDir && { profilesDir: config.profilesDir }),
+    ...(config.profiles && { profiles: config.profiles }),
   };
   writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n");
 }

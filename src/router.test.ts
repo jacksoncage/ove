@@ -260,6 +260,22 @@ describe("parseMessage", () => {
   });
 });
 
+describe("private profile commands", () => {
+  it("parses explicit English memory", () => {
+    expect(parseMessage("remember that my server is bot")).toMatchObject({ type: "remember", args: { fact: "my server is bot" } });
+  });
+
+  it("parses explicit Swedish memory", () => {
+    expect(parseMessage("kom ihåg att min router heter gateway")).toMatchObject({ type: "remember", args: { fact: "min router heter gateway" } });
+  });
+
+  it("parses forget and profile inspection", () => {
+    expect(parseMessage("forget old router")).toMatchObject({ type: "forget", args: { query: "old router" } });
+    expect(parseMessage("/profile").type).toBe("profile");
+    expect(parseMessage("/skills").type).toBe("skills");
+  });
+});
+
 describe("set-mode parsing", () => {
   it("parses 'mode assistant'", () => {
     const result = parseMessage("mode assistant");

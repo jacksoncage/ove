@@ -19,7 +19,15 @@
     },
     "telegram:123456789": {
       "name": "love",
-      "repos": ["*"]
+      "repos": ["*"],
+      "profile": "love"
+    }
+  },
+  "profilesDir": "/home/YOUR_USER/.config/ove/profiles",
+  "profiles": {
+    "love": {
+      "contextFiles": ["OWNER.md", "FAMILY.md", "HOME.md", "INFRASTRUCTURE.md", "PREFERENCES.md", "MEMORY.md"],
+      "autoLearn": true
     }
   },
   "claude": {

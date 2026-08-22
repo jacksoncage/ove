@@ -12,6 +12,7 @@ import type { AgentRunner, RunOptions, RunResult, StatusEvent, StreamEvent } fro
 import type { TraceStore } from "./trace";
 import type { SessionManager } from "./session-manager";
 import type { DebouncedFunction } from "./adapters/debounce";
+import type { ProfileStore } from "./profile-store";
 
 export interface WorkerDeps {
   config: Config;
@@ -27,6 +28,7 @@ export interface WorkerDeps {
   getRepoInfo: (repoName: string) => { url: string; defaultBranch: string } | null;
   trace: TraceStore;
   sessionManager: SessionManager;
+  profiles: ProfileStore;
 }
 
 function findAdapterForUser(userId: string, adapters: ChatAdapter[]): ChatAdapter | undefined {
@@ -157,6 +159,8 @@ async function processTask(task: Task, deps: WorkerDeps) {
       }
 
       const taskRunner = deps.getRunnerForRepo(task.repo);
+      const privateContext = deps.profiles.buildPromptContext(task.userId);
+      const runnerPrompt = privateContext ? `${privateContext}\n\n${task.prompt}` : task.prompt;
       const discussSessionId = isDiscuss
         ? deps.sessions.getAgentSession(task.userId, taskRunner.name)
         : null;
@@ -183,7 +187,7 @@ async function processTask(task: Task, deps: WorkerDeps) {
         // session. This avoids brittle TUI/tmux parsing and supports both
         // Claude and Codex through the same AgentRunner contract.
         result = await taskRunner.run(
-          task.prompt,
+          runnerPrompt,
           workDir,
           runOpts,
           (event: StatusEvent) => {
@@ -199,7 +203,7 @@ async function processTask(task: Task, deps: WorkerDeps) {
       } else if (useStreaming) {
         logger.info("starting streaming session", { taskId: task.id, repo: task.repo });
         const session = (taskRunner as any).runStreaming(
-          task.prompt,
+          runnerPrompt,
           workDir,
           runOpts,
           (event: StreamEvent) => {
@@ -233,7 +237,7 @@ async function processTask(task: Task, deps: WorkerDeps) {
         deps.sessionManager.unregister(task.id);
       } else {
         result = await taskRunner.run(
-          task.prompt,
+          runnerPrompt,
           workDir,
           runOpts,
           (event: StatusEvent) => {
@@ -260,6 +264,13 @@ async function processTask(task: Task, deps: WorkerDeps) {
       }
 
       cancelDebouncedStatus(originalMsg);
+      if (result.output) {
+        const memoryResult = deps.profiles.processMemoryDirectives(task.userId, result.output);
+        result = { ...result, output: memoryResult.output };
+        if (memoryResult.saved > 0) {
+          logger.info("automatic private memories saved", { userId: task.userId, count: memoryResult.saved });
+        }
+      }
       deps.trace.append(task.id, "output", "Runner output", result.output.slice(0, 10_000));
 
       const elapsed = Date.now() - startTime;
